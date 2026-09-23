@@ -1,5 +1,5 @@
 import {node, ring, pathData} from './geometry.js';
-export const VERSION='0.1.0';
+export const VERSION='0.1.1';
 export const uid=()=>globalThis.crypto?.randomUUID?.()||`s-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const createDocument=()=>({format:'vector-studio',version:1,name:'未命名图案',width:1000,height:700,shapes:[],image:null});
 export function makeShape(rings,options={}){return {id:uid(),name:'路径',fill:'#247a70',stroke:'none',strokeWidth:0,visible:true,locked:false,source:'draw',rings,...options};}

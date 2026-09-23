@@ -1,12 +1,13 @@
 import * as G from './geometry.js';
+import {createTracePreview} from './trace-preview.js';
 import {createDocument,makeShape,rectangle,ellipse,exportSVG,validateDocument,History,uid,VERSION} from './document.js';
 const $=id=>document.getElementById(id),NS='http://www.w3.org/2000/svg';
 const canvas=$('editor'),workspace=$('workspace');
 let doc=createDocument(),history=new History(doc),selection=new Set(),nodeSelection=new Set();
 let tool='select',outline=false,showReference=true,fillColor='#247a70',dirty=false,drawingId=null;
-let view={x:-100,y:-100,width:1200,height:900},drag=null,space=false,worker=null,traceJob=0,referenceRevision=0,saveTimer=null,toastTimer=null;
+let view={x:-100,y:-100,width:1200,height:900},drag=null,space=false,worker=null,referenceRevision=0,saveTimer=null,toastTimer=null;
 let savedDraft=null,loadingDraft=false,interacted=false;
-const hints={select:'选择：拖动移动，Shift 多选；空白处框选。',node:'拖动节点或手柄；Alt 独立调手柄；双击曲线加点。',add:'点击曲线增加节点，保持曲线原有形状。',pen:'逐点点击绘制；点击起点闭合；Enter 结束开放路径。',knife:'拖出一条直线切开闭合图形；优先切割已选对象。',scissors:'点击曲线剪断单条路径；分割色块请用「切割」。',fill:'点击现有闭合对象，应用当前填充颜色。',rect:'拖动绘制矩形。Shift 限制为正方形。',ellipse:'拖动绘制椭圆。Shift 限制为圆。',pan:'拖动画布平移；滚轮以鼠标位置为中心缩放。'};
+const hints={select:'选择：拖动移动，Shift 多选；空白处框选。',node:'拖动节点或手柄；Alt 独立调手柄；双击曲线加点。',add:'点击曲线增加节点，保持曲线原有形状。',pen:'逐点点击绘制；点击起点闭合；Enter 结束开放路径。',knife:'只切割拖动起点到终点之间的线段；须贯穿区域，不向两端延伸。优先切割已选对象。',scissors:'点击曲线剪断单条路径；分割色块请用「切割」。',fill:'点击现有闭合对象，应用当前填充颜色。',rect:'拖动绘制矩形。Shift 限制为正方形。',ellipse:'拖动绘制椭圆。Shift 限制为圆。',pan:'拖动画布平移；滚轮以鼠标位置为中心缩放。'};
 const selected=()=>doc.shapes.filter(s=>selection.has(s.id)&&s.visible&&!s.locked);
 const byId=id=>doc.shapes.find(s=>s.id===id);
 const scale=()=>canvas.getScreenCTM()?.a||1;
@@ -17,7 +18,7 @@ function status(text){$('status-message').textContent=text;}
 function toast(message,error=false){clearTimeout(toastTimer);$('toast').textContent=message;$('toast').className=error?'error':'';$('toast').hidden=false;status(message);toastTimer=setTimeout(()=>$('toast').hidden=true,error?6500:3500);}
 function attempt(fn){try{return fn();}catch(e){toast(e.message||String(e),true);console.error(e);return null;}}
 async function attemptAsync(fn){try{return await fn();}catch(e){toast(e.message||String(e),true);console.error(e);return null;}}
-function tab(name){document.querySelectorAll('[data-tab]').forEach(b=>{const active=b.dataset.tab===name;b.classList.toggle('active',active);b.setAttribute('aria-selected',active);$('panel-'+b.dataset.tab).hidden=!active;});}
+function tab(name){document.querySelectorAll('[data-tab]').forEach(b=>{const active=b.dataset.tab===name;b.classList.toggle('active',active);b.setAttribute('aria-selected',active);$('panel-'+b.dataset.tab).hidden=!active;});tracePreview.setVisible(name==='trace');}
 function setTool(next){if(worker)return;if(drawingId&&next!==tool)finishPen();tool=next;canvas.dataset.tool=tool;document.querySelectorAll('[data-tool]').forEach(b=>b.classList.toggle('active',b.dataset.tool===tool));$('tool-hint').textContent=hints[tool];if(['node','fill','add','scissors'].includes(tool))tab('properties');if(tool!=='node'&&tool!=='add')nodeSelection.clear();render();}
 function updateView(){canvas.setAttribute('viewBox',`${view.x} ${view.y} ${view.width} ${view.height}`);$('zoom-value').textContent=Math.round(scale()*100)+'%';renderOverlay();}
 function fit(){const r=workspace.getBoundingClientRect(),s=Math.min((r.width-100)/doc.width,(r.height-115)/doc.height);const z=Math.max(.025,s);view={x:(doc.width-r.width/z)/2,y:(doc.height-r.height/z)/2,width:r.width/z,height:r.height/z};updateView();}
@@ -37,7 +38,7 @@ function render(){
   $('outline-btn').setAttribute('aria-pressed',outline);$('reference-btn').setAttribute('aria-pressed',showReference);
   $('reference').setAttribute('opacity',showReference?(doc.shapes.length?.28:1):0);
   $('rail-color').style.background=fillColor;
-  renderOverlay();renderLayers();renderProperties();
+  renderOverlay();renderLayers();renderProperties();tracePreview.render();
 }
 function renderOverlay(){
   const group=$('overlays');group.replaceChildren();const z=scale();
@@ -80,13 +81,14 @@ function renderProperties(){
   if(s&&s.fill!=='none')$('fill-color').value=s.fill;else $('fill-color').value=fillColor;
   if(s&&s.stroke!=='none')$('stroke-color').value=s.stroke;$('stroke-width').value=s?.strokeWidth||0;
 }
-function syncReference(){const image=$('reference'),preview=$('image-preview');preview.replaceChildren();if(doc.image){image.setAttribute('href',doc.image.src);image.setAttribute('width',doc.image.width);image.setAttribute('height',doc.image.height);const img=document.createElement('img');img.src=doc.image.src;img.alt='本地参考图';preview.append(img);}else{image.removeAttribute('href');const span=document.createElement('span');span.textContent='尚未导入参考图片';preview.append(span);}}
+function syncReference(){const image=$('reference'),preview=$('image-preview');preview.replaceChildren();if(doc.image){image.setAttribute('href',doc.image.src);image.setAttribute('width',doc.image.width);image.setAttribute('height',doc.image.height);const img=document.createElement('img');img.src=doc.image.src;img.alt='本地参考图';preview.append(img);}else{image.removeAttribute('href');const span=document.createElement('span');span.textContent='尚未导入参考图片';preview.append(span);}tracePreview.reset();}
 
 // Pointer tools. All edits are committed once on pointer-up, not on every frame.
 canvas.addEventListener('pointerdown',event=>attempt(()=>{
   interacted=true;if(worker||event.button===2)return;canvas.focus();canvas.setPointerCapture(event.pointerId);
   const p=point(event),id=event.target.closest('[data-id]')?.getAttribute('data-id');
   if(space||event.button===1||tool==='pan'){drag={type:'pan',client:{x:event.clientX,y:event.clientY},view:{...view}};event.preventDefault();return;}
+  tracePreview.hide();
   if(['rect','ellipse','knife'].includes(tool)){drag={type:tool,start:p,current:p};return;}
   if(tool==='pen'){penPoint(p);return;}
   if(tool==='fill'){if(id){const s=byId(id);if(!s.rings.every(r=>r.closed)){toast('开放路径请先闭合后填色。');return;}s.fill=fillColor;selection=new Set([id]);commit('已填色');}return;}
@@ -123,7 +125,7 @@ canvas.addEventListener('pointermove',event=>attempt(()=>{
   }
   drawGesture(event.shiftKey);
 }));
-function drawGesture(square=false){const group=$('gesture');group.replaceChildren();if(!drag)return;let p=drag.current,a=drag.start;const z=scale();if(drag.type==='knife'){group.append(svg('line',{x1:a.x,y1:a.y,x2:p.x,y2:p.y,stroke:'#cb7563','stroke-width':1.7/z,'stroke-dasharray':`${6/z} ${3/z}`}));return;}
+function drawGesture(square=false){const group=$('gesture');group.replaceChildren();if(!drag)return;let p=drag.current,a=drag.start;const z=scale();if(drag.type==='knife'){group.append(svg('line',{x1:a.x,y1:a.y,x2:p.x,y2:p.y,stroke:'#cb7563','stroke-width':1.7/z,'stroke-dasharray':`${6/z} ${3/z}`}));for(const endpoint of [a,p])group.append(svg('circle',{cx:endpoint.x,cy:endpoint.y,r:3/z,fill:'#cb7563',stroke:'white','stroke-width':1/z}));return;}
   let w=p.x-a.x,h=p.y-a.y;if(square&&['rect','ellipse'].includes(drag.type)){const m=Math.max(Math.abs(w),Math.abs(h));w=Math.sign(w||1)*m;h=Math.sign(h||1)*m;drag.current=G.add(a,G.vec(w,h));}const b={x:Math.min(a.x,a.x+w),y:Math.min(a.y,a.y+h),width:Math.abs(w),height:Math.abs(h)};
   group.append(svg(drag.type==='ellipse'?'ellipse':'rect',{...(drag.type==='ellipse'?{cx:b.x+b.width/2,cy:b.y+b.height/2,rx:b.width/2,ry:b.height/2}:b),fill:drag.type.includes('box')?'#2f927215':fillColor+'33',stroke:'#348e7c','stroke-width':1/z,'stroke-dasharray':`${4/z} ${3/z}`}));}
 canvas.addEventListener('pointerup',event=>attempt(()=>{
@@ -136,7 +138,7 @@ canvas.addEventListener('pointerup',event=>attempt(()=>{
     else{nodeSelection=d.previous;for(const s of selected())s.rings.forEach((r,ri)=>r.nodes.forEach((n,ni)=>{if(n.x>=b.x&&n.x<=b.x+b.width&&n.y>=b.y&&n.y<=b.y+b.height)nodeSelection.add(keyFor(s.id,ri,ni));}));}render();return;
   }
   if(G.dist(d.start,p)<2/scale())return;
-  if(d.type==='knife'){performCut(d.start,p);return;}
+  if(d.type==='knife'){performCut(d.start,point(event));return;}
   const x=Math.min(d.start.x,p.x),y=Math.min(d.start.y,p.y),w=Math.abs(p.x-d.start.x),h=Math.abs(p.y-d.start.y);if(w<.1||h<.1)return;
   const s=d.type==='rect'?rectangle(x,y,w,h,{fill:fillColor,name:'矩形'}):ellipse(x+w/2,y+h/2,w/2,h/2,{fill:fillColor,name:'椭圆'});doc.shapes.push(s);selection=new Set([s.id]);commit('已创建图形');setTool('select');tab('properties');
 }));
@@ -163,8 +165,8 @@ function shapeResults(rings,source,name){return G.groupRings(rings).map((g,i)=>m
 function performCut(a,b){
   const targets=selected().length?selected():doc.shapes.filter(s=>s.visible&&!s.locked);const changes=new Map();
   for(const s of targets){if(!s.rings.every(r=>r.closed))continue;const parts=G.cutRings(G.flattenShape(s),a,b);if(!parts[0].length||!parts[1].length)continue;changes.set(s.id,parts.flatMap(r=>shapeResults(r,s,s.name+' · 切片')));}
-  if(!changes.size){toast('切割线未穿过可切割的闭合区域。');return;}
-  doc.shapes=doc.shapes.flatMap(s=>changes.get(s.id)||[s]);selection=new Set([...changes.values()].flat().map(s=>s.id));commit('已切成独立区域；当前几何运算使用 0.35 px 曲线近似');tab('properties');
+  if(!changes.size){toast('这段切割线未贯穿闭合区域；起点和终点不会自动延长。剪开单条轮廓请用「剪断」。');return;}
+  doc.shapes=doc.shapes.flatMap(s=>changes.get(s.id)||[s]);selection=new Set([...changes.values()].flat().map(s=>s.id));commit('已按起点到终点的有限线段切割；0.35 px 曲线近似');tab('properties');
 }
 function performBoolean(op){
   const list=selected();if(list.length<2)throw new Error('请先用 Shift 选择至少两个闭合对象。');
@@ -206,45 +208,24 @@ async function openFile(file){
     const next=validateDocument(JSON.parse(await file.text()));if(!checkDiscard())return;
     doc=next;referenceRevision++;history.reset(doc);dirty=false;selection.clear();nodeSelection.clear();drawingId=null;syncReference();render();fit();scheduleDraft();toast('项目已打开');return;
   }
-  if(!/^image\/(png|jpeg|webp|bmp|x-ms-bmp)$/.test(file.type)&&!/\.(png|jpe?g|webp|bmp)$/i.test(file.name))throw new Error('当前支持 PNG / JPG / WebP / BMP 图片，以及 .vstudio 项目。通用 SVG 导入尚未实现。');
+  if(!/^image\/(png|jpeg|webp|bmp|x-ms-bmp)$/.test(file.type)&&!(/\.(png|jpe?g|webp|bmp)$/i.test(file.name)))throw new Error('当前支持 PNG / JPG / WebP / BMP 图片，以及 .vstudio 项目。通用 SVG 导入尚未实现。');
   const url=URL.createObjectURL(file);
   try{const img=await loadImage(url);if(img.width*img.height>40e6||img.width>20000||img.height>20000)throw new Error('图片尺寸过大，请先缩小到 4000 万像素以下。');if(!checkDiscard())return;
     const factor=Math.min(1,1800/Math.max(img.width,img.height)),w=Math.max(1,Math.round(img.width*factor)),h=Math.max(1,Math.round(img.height*factor));
     const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);
-    doc=createDocument();doc.name=file.name.replace(/\.[^.]+$/,'')||'粘贴的图片';doc.width=w;doc.height=h;doc.image={src:c.toDataURL('image/png'),width:w,height:h};referenceRevision++;history.reset(doc);dirty=true;selection.clear();nodeSelection.clear();drawingId=null;showReference=true;syncReference();render();fit();tab('trace');scheduleDraft();toast('图片已导入，请点击「生成矢量轮廓」');
+    doc=createDocument();doc.name=file.name.replace(/\.[^.]+$/,'')||'粘贴的图片';doc.width=w;doc.height=h;doc.image={src:c.toDataURL('image/png'),width:w,height:h};referenceRevision++;history.reset(doc);dirty=true;selection.clear();nodeSelection.clear();drawingId=null;showReference=true;syncReference();render();fit();tab('trace');scheduleDraft();toast('图片已导入，拖动右侧参数可预览；满意后点击「生成矢量轮廓」');
   }finally{URL.revokeObjectURL(url);}
 }
 function loadImage(src){return new Promise((resolve,reject)=>{const img=new Image();img.onload=()=>resolve(img);img.onerror=()=>reject(new Error('无法读取图片，请检查格式。'));img.src=src;});}
-let traceTimeout=null;
-function cancelTrace(notify=true){traceJob++;clearTimeout(traceTimeout);worker?.terminate();worker=null;$('busy').hidden=true;render();if(notify)toast('已取消描摹，原项目未改动');}
-async function runTrace(){
-  if(!doc.image||worker)return;finishPen();const job=++traceJob,revision=referenceRevision,baseDoc=doc;
-  $('busy').hidden=false;$('trace-btn').disabled=true;
-  try{
-    const img=await loadImage(doc.image.src);if(job!==traceJob)return;
-    const ratio=Math.min(1,+$('trace-size').value/Math.max(img.width,img.height)),w=Math.max(1,Math.round(img.width*ratio)),h=Math.max(1,Math.round(img.height*ratio));
-    const c=document.createElement('canvas');c.width=w;c.height=h;const ctx=c.getContext('2d',{willReadFrequently:true});ctx.drawImage(img,0,0,w,h);const data=ctx.getImageData(0,0,w,h);
-    const options={mode:$('trace-mode').value,threshold:+$('threshold').value,tolerance:+$('tolerance').value,minArea:+$('speckle').value,colors:+$('color-count').value,removeBackground:$('remove-background').checked};
-    const replace=$('replace-trace').checked;worker=new Worker(new URL('./trace-worker.js',import.meta.url),{type:'module'});
-    traceTimeout=setTimeout(()=>{cancelTrace(false);toast('本次描摹已超时，请降低尺寸或减少颜色。',true);},45000);
-    worker.onerror=()=>{cancelTrace(false);toast('描摹进程无法运行。请通过正常网页地址打开，不要直接双击 index.html。',true);};
-    worker.onmessage=({data:message})=>{
-      if(job!==traceJob||revision!==referenceRevision||doc!==baseDoc)return;
-      clearTimeout(traceTimeout);worker?.terminate();worker=null;$('busy').hidden=true;
-      if(!message.ok){render();toast(message.error,true);return;}
-      const factor=doc.image.width/w;
-      const shapes=message.result.shapes.map((s,i)=>{
-        for(const r of s.rings)for(const n of r.nodes){n.x*=factor;n.y*=factor;n.in=G.mul(n.in,factor);n.out=G.mul(n.out,factor);}
-        return makeShape(s.rings,{...s,id:uid(),name:`描摹 ${i+1}`,source:'trace'});
-      });
-      if(!shapes.length){render();toast('没有识别到可用轮廓，请调整阈值或去杂点参数。');return;}
-      const existing=replace?doc.shapes.filter(s=>s.source!=='trace'):doc.shapes;
-      if(existing.length+shapes.length>1500||[...existing,...shapes].reduce((n,s)=>n+s.rings.reduce((m,r)=>m+r.nodes.length,0),0)>50000){render();toast('结果超出编辑预算，请增大简化容差或降低描摹尺寸。',true);return;}
-      doc.shapes=[...existing,...shapes];selection=new Set(shapes.length<=8?shapes.map(s=>s.id):[]);showReference=false;commit(`描摹完成：${shapes.length} 个可编辑对象`);setTool('select');tab('layers');toast(`已生成 ${shapes.length} 个对象，可以开始编辑。`);
-    };
-    worker.postMessage({image:{width:w,height:h,data:data.data},options},[data.data.buffer]);render();
-  }catch(e){if(job===traceJob){cancelTrace(false);throw e;}}
+function cancelTrace(notify=true){tracePreview.cancel();if(notify)toast('已取消描摹，原项目未改动');}
+function applyTrace(shapes,replace){
+  const existing=replace?doc.shapes.filter(s=>s.source!=='trace'):doc.shapes;
+  const next=shapes.map((s,i)=>makeShape(s.rings,{...s,id:uid(),name:`描摹 ${i+1}`,source:'trace'}));
+  if(existing.length+next.length>1500||[...existing,...next].reduce((n,s)=>n+s.rings.reduce((m,r)=>m+r.nodes.length,0),0)>50000)throw new Error('结果超出编辑预算，请增大简化容差或降低描摹尺寸。');
+  doc.shapes=[...existing,...next];selection=new Set(next.length<=8?next.map(s=>s.id):[]);showReference=false;
+  commit(`描摹完成：${next.length} 个可编辑对象`);setTool('select');tab('layers');toast(`已生成 ${next.length} 个对象，可以开始编辑。`);
 }
+function runTrace(){if(!doc.image||worker)return;finishPen();tracePreview.apply();}
 function download(text,type,filename){const blob=new Blob([text],{type}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);}
 function filename(extension){return (doc.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g,'_').trim()||'vector')+extension;}
 function saveProject(){finishPen();validateDocument(doc);download(JSON.stringify(doc,null,2),'application/json',filename('.vstudio'));dirty=false;render();toast('项目文件已保存，包含原图和可编辑路径');}
@@ -312,6 +293,13 @@ window.addEventListener('keydown',e=>{
 window.addEventListener('keyup',e=>{if(e.code==='Space')space=false;});window.addEventListener('blur',()=>space=false);
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
 let sizeInitialized=false;new ResizeObserver(()=>{if(!sizeInitialized){fit();sizeInitialized=true;}else{const r=workspace.getBoundingClientRect(),center={x:view.x+view.width/2,y:view.y+view.height/2},z=scale();view={x:center.x-r.width/z/2,y:center.y-r.height/z/2,width:r.width/z,height:r.height/z};updateView();}}).observe(workspace);
+const tracePreview=createTracePreview({
+  getDocument:()=>doc,
+  createWorker:()=>new Worker(new URL('./trace-worker.js',import.meta.url),{type:'module'}),
+  onApplying:active=>{worker=active?true:null;$('busy').hidden=!active;render();},
+  onApply:applyTrace,onError:error=>toast(error.message,true),refresh:render,
+  referenceOpacity:()=>showReference?(doc.shapes.length?.28:1):0
+});
 modeFields();syncReference();setTool('select');render();fit();loadDraft();
 // Read-only diagnostics for browser tests / bug reports, not a remote API.
-Object.defineProperty(window,'vectorStudio',{value:Object.freeze({version:VERSION,snapshot:()=>G.clone(doc),selection:()=>[...selection],getTool:()=>tool}),writable:false});
+Object.defineProperty(window,'vectorStudio',{value:Object.freeze({version:VERSION,snapshot:()=>G.clone(doc),selection:()=>[...selection],getTool:()=>tool,preview:()=>tracePreview.diagnostics()}),writable:false});

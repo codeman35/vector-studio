@@ -190,7 +190,8 @@ export function stitchEdges(edges) {
       if(used.has(idx))break;used.add(idx);
       const [a,b]=edges[idx];points.push(a);const end=pointKey(b);
       if(end===start){closed=true;break;}
-      const choices=(starts.get(end)||[]).filter(i=>!used.has(i));
+      // Never immediately backtrack along the reciprocal half of a knife seam.
+      const choices=(starts.get(end)||[]).filter(i=>!used.has(i)&&pointKey(edges[i][1])!==pointKey(a));
       if(!choices.length)break;
       // Choose sharpest clockwise continuation in screen coordinates at a junction.
       const v=sub(b,a);
@@ -232,11 +233,98 @@ export function booleanRings(A,B,op='union') {
   }
   return stitchEdges([...boundaries.values()]);
 }
+/** Cut only along [a,b], never along its infinite supporting line.
+ * Returns independently movable pieces (each with its holes). A no-op returns
+ * [rings, []] for backwards compatibility. Inputs are never changed.
+ * As with booleanRings, inputs must be simple, already-flattened contours.
+ */
 export function cutRings(rings,a,b) {
-  const v=sub(b,a),length=dist(a,b);if(length<1)throw new Error('切割线太短。');
-  let max=1;for(const r of rings)for(const p of r)max=Math.max(max,dist(p,a),dist(p,b));
-  const unit=mul(v,1/length),normal=vec(-unit.y,unit.x),extent=max*8+100;
-  const p=add(a,mul(unit,-extent)),q=add(a,mul(unit,extent));
-  const half=[[p,q,add(q,mul(normal,extent)),add(p,mul(normal,extent))]];
-  return [booleanRings(rings,half,'intersect'),booleanRings(rings,half,'subtract')];
+  const length=dist(a,b);
+  if(!Number.isFinite(length)||length<1)throw new Error('切割线太短。');
+  if(rings.reduce((n,r)=>n+r.length,0)>3500)throw new Error('图形过于复杂（展开后超过 3500 条边），请先简化或分批处理。');
+  const groups=groupRings(rings),pieces=[];let changed=false;
+  for(const group of groups){
+    const result=cutConnectedGroup(group,a,b,length);
+    if(result.length>1){changed=true;pieces.push(...result);}else pieces.push(group);
+  }
+  return changed?pieces:[rings,[]];
+}
+
+function cutConnectedGroup(group,a,b,length){
+  // Boundary directions keep filled material on the left, including hole rings.
+  const rings=group.map((r,i)=>(signedArea(r)>0)===(i===0)?r.slice():r.slice().reverse());
+  const boundary=[],hits=[];
+  for(const r of rings)for(let i=0;i<r.length;i++){
+    const p=r[i],q=r[(i+1)%r.length];if(dist(p,q)<1e-5)continue;
+    const cuts=[0,1];
+    for(const [t,u] of segmentIntersections(p,q,a,b)){cuts.push(t);hits.push(u);}
+    const ts=uniqueParameters(cuts);
+    for(let j=1;j<ts.length;j++){
+      const c=lerp(p,q,ts[j-1]),d=lerp(p,q,ts[j]);
+      if(dist(c,d)>1e-5)boundary.push([c,d]);
+    }
+  }
+  const chords=[],ts=uniqueParameters(hits),v=sub(b,a);
+  // Only boundary-to-boundary spans inside the finite drag are real cuts.
+  // Starts/ends inside a shape are NOT extrapolated out to its boundary.
+  for(let i=1;i<ts.length;i++){
+    const p=lerp(a,b,ts[i-1]),q=lerp(a,b,ts[i]),span=dist(p,q);
+    if(span<1e-5)continue;
+    const mid=lerp(p,q,.5),delta=Math.min(.0005,span*.001);
+    const normal=vec(-v.y/length*delta,v.x/length*delta);
+    if(contains(add(mid,normal),rings)&&contains(sub(mid,normal),rings))chords.push([p,q]);
+  }
+  if(!chords.length)return [group];
+  // A single bridge between an outer boundary and a hole only opens a slit,
+  // not two filled pieces. Drop graph bridges before tracing faces so no
+  // duplicated seam or unexpected stroke is left in an unchanged component.
+  const edges=[...boundary,...chords],bridges=graphBridges(edges);
+  const kept=chords.filter((_,i)=>!bridges.has(boundary.length+i));
+  if(!kept.length)return [group];
+  const faces=stitchEdges([...boundary,...kept.flatMap(([p,q])=>[[p,q],[q,p]])]);
+  // Face winding is known here. Testing a shared cut vertex for containment
+  // can misclassify two touching OUTER faces as an outer+hole after rounding.
+  const pieces=faces.filter(r=>signedArea(r)>EPS).map(r=>[r]);
+  for(const hole of faces.filter(r=>signedArea(r)<-EPS)){
+    let parent=null,best=Infinity;
+    for(const piece of pieces){const size=signedArea(piece[0]);if(size<best&&pointInRing(hole[0],piece[0])){parent=piece;best=size;}}
+    if(!parent)throw new Error('切割后的孔洞无法归属，请撤销并简化后重试。');
+    parent.push(hole);
+  }
+  const filled=g=>g.reduce((sum,r,i)=>sum+(i? -1:1)*Math.abs(signedArea(r)),0);
+  const before=filled(group),after=pieces.reduce((sum,g)=>sum+filled(g),0);
+  if(Math.abs(before-after)>Math.max(.001,before*1e-6))throw new Error('切割拓扑校验失败，原图形未改动。');
+  return pieces;
+}
+function uniqueParameters(values){
+  return [...new Set(values.map(t=>Math.round(t*1e10)/1e10))].sort((a,b)=>a-b);
+}
+/** Iterative Tarjan walk: no recursive call-stack risk on detailed contours. */
+function graphBridges(edges){
+  const adjacency=new Map();
+  edges.forEach(([a,b],id)=>{
+    const u=pointKey(a),v=pointKey(b);
+    if(!adjacency.has(u))adjacency.set(u,[]);if(!adjacency.has(v))adjacency.set(v,[]);
+    adjacency.get(u).push({to:v,id});adjacency.get(v).push({to:u,id});
+  });
+  const order=new Map(),low=new Map(),bridges=new Set();let clock=0;
+  for(const root of adjacency.keys()){
+    if(order.has(root))continue;
+    order.set(root,++clock);low.set(root,clock);
+    const stack=[{vertex:root,parent:null,edge:-1,index:0}];
+    while(stack.length){
+      const f=stack.at(-1),neighbors=adjacency.get(f.vertex);
+      if(f.index<neighbors.length){
+        const next=neighbors[f.index++];if(next.id===f.edge)continue;
+        if(order.has(next.to)){low.set(f.vertex,Math.min(low.get(f.vertex),order.get(next.to)));continue;}
+        order.set(next.to,++clock);low.set(next.to,clock);
+        stack.push({vertex:next.to,parent:f.vertex,edge:next.id,index:0});
+      }else{
+        stack.pop();if(f.parent===null)continue;
+        if(low.get(f.vertex)>order.get(f.parent))bridges.add(f.edge);
+        low.set(f.parent,Math.min(low.get(f.parent),low.get(f.vertex)));
+      }
+    }
+  }
+  return bridges;
 }
