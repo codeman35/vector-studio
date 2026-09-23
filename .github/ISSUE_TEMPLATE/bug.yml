@@ -1,0 +1,27 @@
+name: 缺陷反馈
+description: 提交可重现的操作问题、描摹或几何错误
+title: '[Bug] '
+body:
+  - type: textarea
+    id: steps
+    attributes:
+      label: 重现步骤
+      description: 从打开页面开始描述操作；不要提交私人或无授权的原图。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期结果与实际结果
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本与浏览器
+      placeholder: '0.1.0 / Windows / Edge 版本号'
+  - type: textarea
+    id: sample
+    attributes:
+      label: 截图或可公开的最小示例
+      description: 可附 .vstudio 文件。不要上传账号密码、Token、客户资料或敏感图片。

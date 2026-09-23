@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#246c61"><meta name="description" content="开源图片描摹与 SVG 节点编辑器。图片在本机浏览器处理，不上传。">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>线境 · Vector Studio</title><link rel="stylesheet" href="./src/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><svg width="31" height="31" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="#256e63"/><path d="M8 23C9 5 24 27 24 9M8 23L8 14M24 9L24 18" stroke="white" stroke-width="1.8" fill="none"/><rect x="5.5" y="20.5" width="5" height="5" rx="1" fill="white"/><rect x="21.5" y="6.5" width="5" height="5" rx="1" fill="white"/></svg><div><strong>线境</strong><span>VECTOR STUDIO</span></div><small class="version">0.1 预览版</small></div>
+  <div class="project-title"><input id="document-name" value="未命名图案" aria-label="项目名称" maxlength="80"><span id="save-state">尚未修改</span></div>
+  <div class="header-actions"><button id="open-btn" title="导入 PNG / JPG / WebP，或打开 .vstudio 项目">打开</button><button id="save-btn" title="Ctrl + S">保存项目</button><button id="export-btn" class="primary">导出 SVG <span>↗</span></button><button id="help-btn" class="icon-only" aria-label="使用帮助">?</button></div>
+</header>
+<div class="subbar"><div class="history-buttons"><button id="undo-btn" title="撤销 Ctrl+Z" aria-label="撤销">↶</button><button id="redo-btn" title="重做 Ctrl+Shift+Z" aria-label="重做">↷</button><span class="separator"></span><button id="new-btn">新建</button></div><span class="privacy"><i></i> 本机处理 · 图片不上传</span><div class="sub-right"><button id="recover-btn" hidden>恢复上次草稿</button><button id="demo-btn">打开编辑示例</button><span class="muted">SVG / RGB / px</span></div></div>
+<main class="app-layout">
+  <nav class="toolrail" aria-label="编辑工具">
+    <button data-tool="select" class="active" title="选择和移动 V"><svg viewBox="0 0 24 24"><path d="M5 3l14 10-7 1-3 7z"/></svg><span>选择</span><kbd>V</kbd></button>
+    <button data-tool="node" title="节点与手柄 N；双击曲线加点"><svg viewBox="0 0 24 24"><path d="M6 3l12 9-6 2-3 7z"/><path d="M16 16l4 5"/></svg><span>节点</span><kbd>N</kbd></button>
+    <button data-tool="add" title="点击曲线增加节点 A"><svg viewBox="0 0 24 24"><path d="M3 18C8 18 10 6 20 6M12 8v8M8 12h8"/></svg><span>加点</span><kbd>A</kbd></button>
+    <button data-tool="pen" title="逐点绘制；Enter 结束；点击起点闭合 P"><svg viewBox="0 0 24 24"><path d="M12 3l7 12-7 6-7-6zM12 3v10"/><circle cx="12" cy="14" r="2"/></svg><span>钢笔</span><kbd>P</kbd></button>
+    <div class="rail-line"></div>
+    <button data-tool="knife" title="直线切割闭合图形 K"><svg viewBox="0 0 24 24"><path d="M4 20l6-9 8-8 3 3-8 8zM10 11l3 3"/></svg><span>切割</span><kbd>K</kbd></button>
+    <button data-tool="scissors" title="剪断单条路径 C；闭合区域切块请用切割"><svg viewBox="0 0 24 24"><circle cx="6" cy="17" r="3"/><circle cx="18" cy="17" r="3"/><path d="M8 15L18 3M16 15L6 3"/></svg><span>剪断</span><kbd>C</kbd></button>
+    <button data-tool="fill" title="给现有闭合对象填色 F"><svg viewBox="0 0 24 24"><path d="M5 9l7-7 8 8-8 8zM5 9h15M6 16s-3 4-3 5a2 2 0 004 0c0-1-1-5-1-5z"/></svg><span>填色</span><kbd>F</kbd></button>
+    <div class="rail-line"></div>
+    <button data-tool="rect" title="矩形 R"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="1"/></svg><span>矩形</span><kbd>R</kbd></button>
+    <button data-tool="ellipse" title="椭圆 E"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg><span>椭圆</span><kbd>E</kbd></button>
+    <button data-tool="pan" title="平移 H；或按住空格拖动"><svg viewBox="0 0 24 24"><path d="M7 11V6a2 2 0 014 0v6-8a2 2 0 014 0v8-5a2 2 0 014 0v7l-3 7H9l-5-8a2 2 0 013-2z"/></svg><span>平移</span><kbd>H</kbd></button>
+    <button id="rail-color-btn" title="当前填充颜色"><span id="rail-color"></span></button>
+  </nav>
+  <section class="workspace" id="workspace" aria-label="矢量编辑画布">
+    <div class="workspace-label">画板 <span id="board-size">1000 × 700 px</span></div>
+    <svg id="editor" xmlns="http://www.w3.org/2000/svg" aria-label="交互式 SVG 画布" tabindex="0">
+      <defs><pattern id="checker" width="20" height="20" patternUnits="userSpaceOnUse"><rect width="20" height="20" fill="#fff"/><path d="M0 0h10v10H0zM10 10h10v10H10z" fill="#f2f3f3"/></pattern></defs>
+      <rect id="artboard" x="0" y="0" width="1000" height="700" fill="url(#checker)" stroke="#d6dcd9" stroke-width="1"/>
+      <image id="reference" x="0" y="0" opacity=".3" pointer-events="none"/>
+      <g id="objects"></g><g id="overlays"></g><g id="gesture" pointer-events="none"></g>
+    </svg>
+    <div class="welcome" id="welcome"><span class="eyebrow">从一张图片开始</span><h1>把轮廓，变成<br>可以编辑的路径。</h1><p>粘贴或拖入图片，在本机完成描摹。<br>修节点、切图形，再给你的作品上色。</p><div class="welcome-actions"><button class="primary" id="welcome-open">导入图片 <span>＋</span></button><button id="paste-btn">粘贴图片 <kbd>Ctrl V</kbd></button></div><button id="raster-demo-btn" class="text-link">没有图片？试试描摹示例 →</button><div class="welcome-note">PNG · JPG · WebP · BMP　/　无需账号</div></div>
+    <div id="busy" class="busy" hidden><div class="spinner"></div><strong>正在本机描摹…</strong><span>图片不会上传到服务器</span><button id="cancel-trace">取消</button></div>
+    <div class="canvas-dock"><button id="zoom-out" aria-label="缩小">−</button><button id="zoom-value" title="恢复 100%">100%</button><button id="zoom-in" aria-label="放大">＋</button><span class="separator"></span><button id="fit-btn">适合画布</button><span class="separator"></span><button id="outline-btn" aria-pressed="false">轮廓视图</button><button id="reference-btn" aria-pressed="true">参考底图</button></div>
+  </section>
+  <aside class="inspector">
+    <div class="tabs" role="tablist"><button data-tab="trace" class="active" role="tab" aria-selected="true">图片描摹</button><button data-tab="properties" role="tab" aria-selected="false">图形属性</button><button data-tab="layers" role="tab" aria-selected="false">对象图层</button></div>
+    <div class="panel" id="panel-trace">
+      <div class="section-title"><h2>轮廓描摹</h2><span class="mini-badge">预览引擎</span></div><p class="panel-description">适合黑白字形、印章、简单图案。生成的是外轮廓，不是中心线。</p>
+      <div class="image-preview" id="image-preview"><span>尚未导入参考图片</span></div>
+      <label class="field">描摹模式<select id="trace-mode"><option value="binary">黑白轮廓</option><option value="color">少色图案</option></select></label>
+      <label class="field">二值化阈值 <output id="threshold-value">170</output><input id="threshold" type="range" min="0" max="255" value="170"></label>
+      <label class="field">颜色数量<select id="color-count"><option>2</option><option>4</option><option selected>6</option><option>8</option><option>12</option><option>16</option></select></label>
+      <label class="field">简化容差 <output id="tolerance-value">1.1 px</output><input id="tolerance" type="range" min="0.2" max="4" step="0.1" value="1.1"></label>
+      <label class="field">忽略小区域 <output id="speckle-value">8 px²</output><input id="speckle" type="range" min="0" max="100" value="8"></label>
+      <label class="field">描摹最大边<select id="trace-size"><option value="512">512 px · 较快</option><option value="768" selected>768 px · 均衡</option><option value="1024">1024 px · 较细</option></select></label>
+      <label class="check-row"><input id="remove-background" type="checkbox" checked>少色模式：去除与边缘相连的白底</label>
+      <label class="check-row"><input id="replace-trace" type="checkbox" checked>重新描摹时替换此前的描摹对象</label>
+      <button id="trace-btn" class="primary full" disabled>生成矢量轮廓 <span>→</span></button>
+      <p class="hint">参数不会自动重描，请点击按钮应用。原图仅作为底图，不包含在 SVG 导出中。</p>
+      <details class="technical"><summary>这个版本的能力边界</summary><p>当前使用自带的像素轮廓预览算法，尚未接入 VTracer。复杂照片、极细笔画和专业印刷稿需人工检查。高级拟合、专色及 PSD / AI / CDR 导出尚未实现。</p></details>
+    </div>
+    <div class="panel" id="panel-properties" hidden>
+      <div class="section-title"><h2>选择属性</h2><span id="selection-count" class="mini-badge">0 个对象</span></div>
+      <label class="field">对象名称<input type="text" id="shape-name" placeholder="选择一个对象" maxlength="100"></label>
+      <div class="coordinates"><label>X<input type="number" id="prop-x" step="1"></label><label>Y<input type="number" id="prop-y" step="1"></label><label>宽度<input type="number" id="prop-w" min=".1" step="1"></label><label>高度<input type="number" id="prop-h" min=".1" step="1"></label></div>
+      <div class="section-title spaced"><h2>颜色与描边</h2></div>
+      <div class="color-row"><label>填充 <input id="fill-color" type="color" value="#247a70"></label><button id="no-fill">无填充</button></div><div class="swatches" id="swatches"></div>
+      <div class="color-row"><label>描边 <input id="stroke-color" type="color" value="#1c222e"></label><label class="stroke-width-label"><input id="stroke-width" type="number" value="0" min="0" max="100" step=".5"> px</label></div>
+      <div class="section-title spaced"><h2>节点与路径</h2></div>
+      <div class="button-grid"><button id="smooth-btn">平滑节点</button><button id="corner-btn">转为尖角</button><button id="join-btn" title="连接两条开放路径 J">连接端点</button><button id="close-btn">闭合路径</button><button id="simplify-btn">简化轮廓</button><button id="delete-btn" class="danger-text">删除所选</button></div>
+      <div class="section-title spaced"><h2>几何运算</h2></div><div class="button-grid"><button data-boolean="union" title="至少选择两个闭合对象 U">合并</button><button data-boolean="subtract" title="按叠放顺序：底层减去上层">相减</button><button data-boolean="intersect">交集</button><button id="split-objects">拆分独立区域</button></div>
+      <p class="hint">相减 = 底层对象减去上层对象。当前几何运算会按 0.35 px 容差将曲线转换为折线。镂空跟随所属区域保留。</p>
+      <div class="button-grid"><button id="raise-btn">上移一层</button><button id="lower-btn">下移一层</button></div>
+    </div>
+    <div class="panel" id="panel-layers" hidden><div class="section-title"><h2>对象图层</h2><span id="layer-count" class="mini-badge">0</span></div><p class="panel-description">上方对象位于前景。Shift 点击多选；双击名称重命名。</p><div id="layer-list"></div><p class="hint">一个对象可包含多条轮廓及镂空。参考底图独立锁定，不参与导出。</p></div>
+    <div class="inspector-bottom"><span id="tool-hint">选择：拖动移动，Shift 多选，空白处框选。</span></div>
+  </aside>
+</main>
+<footer class="statusbar"><span id="status-message">就绪 · 拖入图片，或按 Ctrl + V 粘贴</span><div><span id="object-stats">0 个对象 · 0 个节点</span><span class="status-dot"></span><span>开源 / 无后台</span></div></footer>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+<input type="file" id="file-input" accept="image/png,image/jpeg,image/webp,image/bmp,.vstudio,.json" hidden>
+<dialog id="help-dialog"><div class="dialog-head"><h2>线境 · 首版使用说明</h2><button id="close-help" aria-label="关闭帮助">×</button></div><p>这是可迭代的功能预览版，不是生产级印前软件。所有图像与几何计算在浏览器本机执行。</p><h3>从图片开始</h3><p>粘贴 / 拖入图片 → 调整右侧参数 → 生成轮廓 → 用节点工具修形 → 切割合并 → 填色 → 导出 SVG。</p><h3>关键操作</h3><div class="shortcut-grid"><span>选择 / 节点</span><kbd>V / N</kbd><span>增加节点</span><kbd>A 或双击曲线</kbd><span>直线切割 / 剪断路径</span><kbd>K / C</kbd><span>钢笔结束 / 闭合</span><kbd>Enter / 点击起点</kbd><span>独立调整手柄</span><kbd>Alt + 拖动手柄</kbd><span>框选或多选</span><kbd>拖动空白 / Shift</kbd><span>撤销 / 重做</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>连接端点 / 合并</span><kbd>J / U</kbd><span>平移 / 缩放</span><kbd>空格拖动 / 滚轮</kbd><span>保存项目 / 全选</span><kbd>Ctrl S / Ctrl A</kbd></div><h3>保存与限制</h3><p>用 .vstudio 保存可继续编辑的项目；SVG 导出保留路径、颜色和孔洞，不含参考图片。浏览器草稿只是辅助，请主动保存项目文件。</p><p>当前是像素轮廓预览算法，不是 VTracer。几何运算先以 0.35 px 近似展开曲线，复杂稿件应检查。任意线围成区域的自动填色、PSD / AI / CDR、CMYK / 专色、通用 SVG 导入尚未实现。</p><p>首次通过 GitHub Pages 加载后，此标签页不依赖外部服务。尚未提供离线重启缓存。</p><button class="primary full" id="help-done">开始编辑</button></dialog>
+<noscript>此编辑器需要启用 JavaScript。无需后台服务器。</noscript><script type="module" src="./src/app.js"></script>
+</body></html>
