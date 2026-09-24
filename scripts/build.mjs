@@ -6,7 +6,7 @@ import {createHash} from 'node:crypto';
 import {buildPublicLibrary} from './build-public.mjs';
 const root=fileURLToPath(new URL('..',import.meta.url));
 const read=p=>readFile(resolve(root,p),'utf8');
-const modules={geometry:'VSGeometry',groups:'VSGroups',document:'VSDocument','trace-curves':'VSCurves',trace:'VSTrace','trace-preview':'VSPreview','project-store':'VSStore','project-library':'VSLibrary','editor-ui':'VSUI',psd:'VSPsd',precision:'VSPrecision','precision-ui':'VSPrecisionUI',contours:'VSContours','contour-ui':'VSContourUI','public-projects':'VSPublicProjects','public-library':'VSPublicLibrary'};
+const modules={geometry:'VSGeometry',groups:'VSGroups',document:'VSDocument','trace-curves':'VSCurves',trace:'VSTrace','trace-preview':'VSPreview','project-store':'VSStore','project-library':'VSLibrary','editor-ui':'VSUI',psd:'VSPsd',precision:'VSPrecision','precision-ui':'VSPrecisionUI',contours:'VSContours','contour-ui':'VSContourUI','public-projects':'VSPublicProjects','public-library':'VSPublicLibrary','curve-drag':'VSCurveDrag'};
 function linkImports(source){
  return source.replace(/import \* as (\w+) from '\.\/(.*?)\.js';/g,(_,name,file)=>{if(!modules[file])throw new Error('Unknown module '+file);return `const ${name}=${modules[file]};`;})
  .replace(/import \{([^}]+)\} from '\.\/(.*?)\.js';/g,(_,names,file)=>{if(!modules[file])throw new Error('Unknown module '+file);return `const {${names}}=${modules[file]};`;});

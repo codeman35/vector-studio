@@ -1,3 +1,4 @@
+import {pickCurveSegment,beginCurveDrag,curveDragHandles,draggedCurvePoint,curveDragCursor} from './curve-drag.js';
 import {createPrecisionTools} from './precision-ui.js';
 import {holeAt,removeContours,pickEditorPoint} from './contours.js';
 import {createContourPanel} from './contour-ui.js';
@@ -17,7 +18,7 @@ let tool='select',outline=false,showReference=true,fillColor='#e60012',dirty=fal
 let view={x:-100,y:-100,width:1200,height:900},drag=null,space=false,worker=null,referenceRevision=0,saveTimer=null,toastTimer=null;
 let precision=null,contourPanel=null;
 let savedDraft=null,interacted=false,savedState=JSON.stringify(doc),exporting=false;
-const hints={select:'双击图形进入节点编辑；Shift 多选；群组整体移动；右键打开操作菜单。',node:'图形内外拖动均可框选节点；Shift 追加；Ctrl 点击曲线加点；Alt 点击节点减点；双击空白或 Esc 退出编辑。',add:'点击曲线增加节点，保持曲线原有形状。',pen:'逐点点击绘制；点击起点闭合；Enter 结束开放路径。',knife:'只切割拖动起点到终点之间的线段；须贯穿区域，不向两端延伸。优先切割已选对象。',scissors:'点击曲线剪断单条路径；分割色块请用「切割」。',fill:'点击现有闭合对象，应用当前填充颜色。',rect:'拖动绘制矩形。Shift 限制为正方形。',ellipse:'拖动绘制椭圆。Shift 限制为圆。',pan:'拖动画布平移；滚轮以鼠标位置为中心缩放。'};
+const hints={select:'双击图形进入节点编辑；Shift 多选；群组整体移动；右键打开操作菜单。',node:'出现弧线光标即可向内/向外拖动线条（两端不动）；内部拖动框选；Shift 强制框选；Ctrl 加点；Alt 删点；双击空白退出。',add:'点击曲线增加节点，保持曲线原有形状。',pen:'逐点点击绘制；点击起点闭合；Enter 结束开放路径。',knife:'只切割拖动起点到终点之间的线段；须贯穿区域，不向两端延伸。优先切割已选对象。',scissors:'点击曲线剪断单条路径；分割色块请用「切割」。',fill:'点击现有闭合对象，应用当前填充颜色。',rect:'拖动绘制矩形。Shift 限制为正方形。',ellipse:'拖动绘制椭圆。Shift 限制为圆。',pan:'拖动画布平移；滚轮以鼠标位置为中心缩放。'};
 const selected=()=>doc.shapes.filter(s=>selection.has(s.id)&&s.visible&&!s.locked);
 const byId=id=>doc.shapes.find(s=>s.id===id);
 const scale=()=>canvas.getScreenCTM()?.a||1;
@@ -29,7 +30,7 @@ function toast(message,error=false){clearTimeout(toastTimer);$('toast').textCont
 function attempt(fn){try{const result=fn();if(result?.then)result.catch(e=>{toast(e.message||String(e),true);console.error(e);});return result;}catch(e){toast(e.message||String(e),true);console.error(e);return null;}}
 async function attemptAsync(fn){try{return await fn();}catch(e){toast(e.message||String(e),true);console.error(e);return null;}}
 function tab(name){document.querySelectorAll('[data-tab]').forEach(b=>{const active=b.dataset.tab===name;b.classList.toggle('active',active);b.setAttribute('aria-selected',active);$('panel-'+b.dataset.tab).hidden=!active;});tracePreview.setVisible(name==='trace');}
-function setTool(next){if(worker)return;precision?.clearSnap();const allowed=capabilities(doc,selection,nodeSelection.size);if(next in allowed&&!allowed[next]){toast('还没有适合此工具的可编辑矢量对象，请先生成轮廓或绘图。');return;}if(drawingId&&next!==tool)finishPen();tool=next;canvas.dataset.tool=tool;document.querySelectorAll('[data-tool]').forEach(b=>b.classList.toggle('active',b.dataset.tool===tool));$('tool-hint').textContent=hints[tool];if(['node','fill','add','scissors'].includes(tool))tab('properties');if(tool!=='node'&&tool!=='add')nodeSelection.clear();render();}
+function setTool(next){if(worker)return;if(drag?.type==='curve')cancelGesture();clearCurveHover();precision?.clearSnap();const allowed=capabilities(doc,selection,nodeSelection.size);if(next in allowed&&!allowed[next]){toast('还没有适合此工具的可编辑矢量对象，请先生成轮廓或绘图。');return;}if(drawingId&&next!==tool)finishPen();tool=next;canvas.dataset.tool=tool;document.querySelectorAll('[data-tool]').forEach(b=>b.classList.toggle('active',b.dataset.tool===tool));$('tool-hint').textContent=hints[tool];if(['node','fill','add','scissors'].includes(tool))tab('properties');if(tool!=='node'&&tool!=='add')nodeSelection.clear();render();}
 function updateView(){canvas.setAttribute('viewBox',`${view.x} ${view.y} ${view.width} ${view.height}`);$('zoom-value').textContent=Math.round(scale()*100)+'%';renderOverlay();precision?.render();}
 function fit(){const r=workspace.getBoundingClientRect(),s=Math.min((r.width-100)/doc.width,(r.height-115)/doc.height);const z=Math.max(.025,s);view={x:(doc.width-r.width/z)/2,y:(doc.height-r.height/z)/2,width:r.width/z,height:r.height/z};updateView();}
 function zoom(factor,at){const r=workspace.getBoundingClientRect();at=at||{x:view.x+view.width/2,y:view.y+view.height/2};const newScale=scale()/factor;if(newScale<.025||newScale>30)return;view={x:at.x-(at.x-view.x)*factor,y:at.y-(at.y-view.y)*factor,width:view.width*factor,height:view.height*factor};updateView();}
@@ -56,6 +57,7 @@ function render(){
   $('rail-color').style.background=fillColor;
   editNotice.hidden=tool!=='node';editLabel.textContent='正在编辑：'+(selected().map(s=>s.name).join('、')||'请选择图形');
   renderOverlay();renderLayers();renderProperties();tracePreview.render();renderCommandState();precision?.render();contourPanel?.render();
+  if(drag?.type==='curve')drawCurveFeedback(drag);else clearCurveHover();
 }
 function renderOverlay(){
   const group=$('overlays');group.replaceChildren();const z=scale();
@@ -108,9 +110,49 @@ function renderProperties(){
 }
 function syncReference(){const image=$('reference'),preview=$('image-preview');preview.replaceChildren();if(doc.image){image.setAttribute('href',doc.image.src);image.setAttribute('width',doc.image.width);image.setAttribute('height',doc.image.height);const img=document.createElement('img');img.src=doc.image.src;img.alt='本地参考图';preview.append(img);}else{image.removeAttribute('href');const span=document.createElement('span');span.textContent='尚未导入参考图片';preview.append(span);}tracePreview.reset();}
 
+// Direct segment dragging is limited to node mode and its existing edit selection.
+const curveFeedback=svg('g',{'pointer-events':'none',id:'curve-drag-feedback'});canvas.append(curveFeedback);
+let curveHoverFrame=null,curveHoverEvent=null;
+function clearCurveHover(){
+  if(curveHoverFrame!==null)cancelAnimationFrame(curveHoverFrame);
+  curveHoverFrame=null;curveHoverEvent=null;curveFeedback.replaceChildren();canvas.style.cursor='';delete canvas.dataset.curveDrag;
+}
+function drawCurveFeedback(hit){
+  curveFeedback.replaceChildren();const r=byId(hit.sid||hit.id)?.rings[hit.ri??hit.ringIndex],i=hit.index;
+  if(!r?.nodes[i])return;const a=r.nodes[i],b=r.nodes[(i+1)%r.nodes.length],z=scale();
+  curveFeedback.append(svg('path',{d:G.pathData({rings:[{closed:false,nodes:[a,b]}]}),fill:'none',stroke:'#2868c7','stroke-width':3/z,'stroke-linecap':'round'}));
+  if(hit.type==='curve'){
+    const q=draggedCurvePoint(a,b,hit.basis);
+    curveFeedback.append(svg('circle',{cx:q.x,cy:q.y,r:4/z,fill:'white',stroke:'#2868c7','stroke-width':1.5/z}));
+  }
+  canvas.style.cursor=curveDragCursor(hit.type==='curve');
+  canvas.dataset.curveDrag=hit.type==='curve'?'dragging':'ready';
+}
+function hoverCurve(event){
+  curveHoverEvent={clientX:event.clientX,clientY:event.clientY,shiftKey:event.shiftKey,ctrlKey:event.ctrlKey,metaKey:event.metaKey,altKey:event.altKey};
+  if(curveHoverFrame!==null)return;
+  curveHoverFrame=requestAnimationFrame(()=>{
+    curveHoverFrame=null;const e=curveHoverEvent;curveHoverEvent=null;
+    if(!e||tool!=='node'||drag||worker||exporting||space||e.shiftKey||e.ctrlKey||e.metaKey||e.altKey){clearCurveHover();return;}
+    const p=point(e),h=pickEditorPoint(doc.shapes,selection,nodeSelection,p,scale());
+    if(h.node||h.handle){clearCurveHover();return;}
+    const hit=pickCurveSegment(doc.shapes,selection,p,scale());if(hit)drawCurveFeedback(hit);else clearCurveHover();
+  });
+}
+function updateCurveDrag(p){
+  const d=drag;if(d?.type!=='curve')return;
+  d.moved=d.moved||G.dist(d.start,p)*d.startScale>=3;
+  if(!d.moved)return;
+  const shape=byId(d.sid),r=shape?.rings[d.ri],a=r?.nodes[d.index],b=r?.nodes[d.nextIndex];
+  if(!shape?.visible||shape.locked||!a||!b){cancelGesture();return;}
+  try{const handles=curveDragHandles(d.basis,G.sub(p,d.start));a.out=handles.out;b.in=handles.in;}
+  catch(error){cancelGesture();toast(error.message,true);return;}
+  render();
+}
+
 // Pointer tools. All edits are committed once on pointer-up, not on every frame.
 canvas.addEventListener('pointerdown',event=>attempt(()=>{
-  interacted=true;if(worker||event.button===2)return;canvas.focus();canvas.setPointerCapture(event.pointerId);
+  interacted=true;if(worker||exporting||event.button===2||drag?.type==='curve')return;clearCurveHover();canvas.focus();canvas.setPointerCapture(event.pointerId);
   const p=point(event),id=event.target.closest('[data-id]')?.getAttribute('data-id');
   const hitPoint=tool==='node'?pickEditorPoint(doc.shapes,selection,nodeSelection,p,scale()):{};
   const hkey=hitPoint.node?null:hitPoint.handle||event.target.getAttribute('data-handle'),nkey=hitPoint.handle?null:hitPoint.node||event.target.getAttribute('data-node');
@@ -133,6 +175,19 @@ canvas.addEventListener('pointerdown',event=>attempt(()=>{
     const hit=findCurve(p,id);if(!hit)return;
     if(tool==='add'){addNodeAt(hit);}else scissors(hit);return;
   }
+  // A near-contour press bends just that segment; Shift forces marquee instead.
+  // Node / handle / Ctrl / Alt / pan handling above always has priority.
+  if(tool==='node'&&!event.shiftKey){
+    const hit=pickCurveSegment(doc.shapes,selection,p,scale());
+    if(hit){
+      const r=byId(hit.id).rings[hit.ringIndex],nextIndex=(hit.index+1)%r.nodes.length;
+      const basis=beginCurveDrag(r.nodes[hit.index],r.nodes[nextIndex],hit.t);
+      drag={type:'curve',sid:hit.id,ri:hit.ringIndex,index:hit.index,nextIndex,basis,start:p,current:p,
+        startScale:scale(),pointerId:event.pointerId,moved:false,beforeNodes:new Set(nodeSelection)};
+      nodeSelection=new Set([keyFor(hit.id,hit.ringIndex,hit.index),keyFor(hit.id,hit.ringIndex,nextIndex)]);
+      event.preventDefault();render();return;
+    }
+  }
   // In node mode a filled path is a marquee surface, not an object drag.
   // Keep the edited objects fixed for the gesture; resolve single clicks later.
   if(tool==='node'){
@@ -153,7 +208,8 @@ canvas.addEventListener('pointerdown',event=>attempt(()=>{
 }));
 canvas.addEventListener('pointermove',event=>attempt(()=>{
   if(worker)return;const p=point(event);
-  if(!drag){if(drawingId){const snapped=precision.snapPen(p,event);const n=byId(drawingId)?.rings[0].nodes.at(-1);if(n){$('gesture').replaceChildren(svg('line',{x1:n.x,y1:n.y,x2:snapped.x,y2:snapped.y,stroke:'#4b9a87','stroke-width':1/scale(),'stroke-dasharray':`${4/scale()} ${3/scale()}`}));}}return;}
+  if(!drag){if(tool==='node')hoverCurve(event);if(drawingId){const snapped=precision.snapPen(p,event);const n=byId(drawingId)?.rings[0].nodes.at(-1);if(n){$('gesture').replaceChildren(svg('line',{x1:n.x,y1:n.y,x2:snapped.x,y2:snapped.y,stroke:'#4b9a87','stroke-width':1/scale(),'stroke-dasharray':`${4/scale()} ${3/scale()}`}));}}return;}
+  if(drag.type==='curve'){if(event.pointerId!==drag.pointerId)return;drag.current=p;updateCurveDrag(p);return;}
   drag.current=p;
   if(drag.type==='pan'){const z=scale();view={...drag.view,x:drag.view.x-(event.clientX-drag.client.x)/z,y:drag.view.y-(event.clientY-drag.client.y)/z};updateView();return;}
   if(drag.type==='move'){let delta=G.sub(p,drag.start);if(event.shiftKey)delta=Math.abs(delta.x)>Math.abs(delta.y)?G.vec(delta.x,0):G.vec(0,delta.y);for(const [id,orig]of drag.original){const s=byId(id);s.rings=G.clone(orig.rings);G.translate(s,delta);}render();return;}
@@ -187,6 +243,13 @@ function drawGesture(square=false){const group=$('gesture');group.replaceChildre
   group.append(svg(drag.type==='ellipse'?'ellipse':'rect',{...(drag.type==='ellipse'?{cx:b.x+b.width/2,cy:b.y+b.height/2,rx:b.width/2,ry:b.height/2}:b),fill:drag.type.includes('box')?'#2f927215':fillColor+'33',stroke:'#348e7c','stroke-width':1/z,'stroke-dasharray':`${4/z} ${3/z}`}));}
 canvas.addEventListener('pointerup',event=>attempt(()=>{
   if(!drag)return;
+  if(drag.type==='curve'){
+    if(event.pointerId!==drag.pointerId)return;updateCurveDrag(point(event));
+    if(!drag)return;const d=drag;drag=null;clearCurveHover();
+    const r=byId(d.sid)?.rings[d.ri],a=r?.nodes[d.index],b=r?.nodes[d.nextIndex];
+    const changed=d.moved&&a&&b&&(a.out.x!==d.basis.oldOut.x||a.out.y!==d.basis.oldOut.y||b.in.x!==d.basis.oldIn.x||b.in.y!==d.basis.oldIn.y);
+    if(changed)commit('已弯曲线段：两个端点保持不动，Ctrl Z 可撤销');else render();return;
+  }
   // Re-evaluate the final pointer position, even if no final pointermove arrived.
   if(drag.type==='nodes'&&G.dist(drag.start,point(event))>.01){const delta=precision.snapNode(drag,point(event),event);for(const[key,orig]of drag.original){const[id,ri,ni]=key.split('|'),n=byId(id).rings[+ri].nodes[+ni];n.x=orig.x+delta.x;n.y=orig.y+delta.y;}}
   const d=drag;drag=null;precision.clearSnap();$('gesture').replaceChildren();
@@ -214,7 +277,14 @@ canvas.addEventListener('pointerup',event=>attempt(()=>{
   const x=Math.min(d.start.x,p.x),y=Math.min(d.start.y,p.y),w=Math.abs(p.x-d.start.x),h=Math.abs(p.y-d.start.y);if(w<.1||h<.1)return;
   const s=d.type==='rect'?rectangle(x,y,w,h,{fill:fillColor,name:'矩形'}):ellipse(x+w/2,y+h/2,w/2,h/2,{fill:fillColor,name:'椭圆'});doc.shapes.push(s);selection=new Set([s.id]);commit('已创建图形');setTool('select');tab('properties');
 }));
-function cancelGesture(){if(drag&&['move','nodes','handle'].includes(drag.type)){doc=JSON.parse(history.states[history.index]);}if(drag?.type==='node-box')nodeSelection=new Set(drag.beforeNodes);drag=null;precision?.clearSnap();$('gesture').replaceChildren();render();}
+function cancelGesture(){
+  if(drag?.type==='curve'){
+    const r=byId(drag.sid)?.rings[drag.ri];
+    if(r?.nodes[drag.index]&&r?.nodes[drag.nextIndex]){r.nodes[drag.index].out=G.clone(drag.basis.oldOut);r.nodes[drag.nextIndex].in=G.clone(drag.basis.oldIn);}
+    nodeSelection=new Set(drag.beforeNodes);
+  }
+  clearCurveHover();if(drag&&['move','nodes','handle'].includes(drag.type)){doc=JSON.parse(history.states[history.index]);}if(drag?.type==='node-box')nodeSelection=new Set(drag.beforeNodes);drag=null;precision?.clearSnap();$('gesture').replaceChildren();render();}
+canvas.addEventListener('pointerleave',()=>{if(!drag)clearCurveHover();});
 canvas.addEventListener('pointercancel',cancelGesture);
 canvas.addEventListener('lostpointercapture',()=>{if(drag)cancelGesture();});
 canvas.addEventListener('dblclick',e=>attempt(()=>{
@@ -242,7 +312,7 @@ function nearestAnchor(p,id){
   let best=null,distance=12/scale();const pool=id?[byId(id)]:selected();
   for(const s of pool){if(!s||s.locked||!s.visible)continue;s.rings.forEach((r,ri)=>r.nodes.forEach((n,ni)=>{const d=G.dist(n,p);if(d<distance){distance=d;best=keyFor(s.id,ri,ni);}}));}return best;
 }
-canvas.addEventListener('wheel',e=>{e.preventDefault();zoom(Math.exp(Math.max(-1,Math.min(1,e.deltaY*.0015))),point(e));},{passive:false});
+canvas.addEventListener('wheel',e=>{e.preventDefault();if(drag?.type==='curve')return;zoom(Math.exp(Math.max(-1,Math.min(1,e.deltaY*.0015))),point(e));},{passive:false});
 canvas.addEventListener('contextmenu',e=>showContext(e));
 function findCurve(p,id){let best=null;const pool=id?[byId(id)]:selected().length?selected():doc.shapes.filter(s=>s.visible&&!s.locked);for(const s of pool){if(!s||s.locked||!s.visible)continue;const h=G.nearestCurve(s,p);if(h&&(!best||h.distance<best.distance))best={...h,shape:s};}return best&&best.distance<=12/scale()?best:null;}
 function penPoint(p){
@@ -366,6 +436,7 @@ function scheduleDraft(){clearTimeout(saveTimer);const snapshot=G.clone(doc);sav
 async function loadDraft(){try{const db=await draftDB(),tx=db.transaction('drafts','readonly'),request=tx.objectStore('drafts').get('latest');request.onsuccess=()=>{db.close();try{if(request.result){savedDraft=validateDocument(request.result);if(savedDraft.shapes.length||savedDraft.image)$('recover-btn').hidden=false;}}catch{}};request.onerror=()=>db.close();}catch{}}
 
 function showContext(event,layerIds=null){
+  if(drag?.type==='curve')cancelGesture();clearCurveHover();
   event.preventDefault();if(worker||exporting)return;
   const p=point(event),nodeKey=event.target.getAttribute('data-node');
   let id=event.target.closest('[data-id]')?.getAttribute('data-id')||nodeKey?.split('|')[0];
@@ -426,6 +497,7 @@ window.addEventListener('paste',e=>{if(/^(INPUT|TEXTAREA)$/.test(document.active
 on('paste-btn',()=>attemptAsync(async()=>{if(!navigator.clipboard?.read){toast('请直接按 Ctrl + V 粘贴图片。');return;}try{const items=await navigator.clipboard.read();for(const item of items){const type=item.types.find(t=>/^image\/(png|jpeg|webp|bmp)$/.test(t));if(type){const blob=await item.getType(type);await openFile(new File([blob],'粘贴图片.'+(type.split('/')[1]),{type}));return;}}toast('剪贴板中没有支持的图片。');}catch{toast('浏览器未允许读取剪贴板，请直接按 Ctrl + V。');}}));
 workspace.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='copy';});workspace.addEventListener('drop',e=>{e.preventDefault();attemptAsync(()=>openFile(e.dataTransfer.files[0]));});
 window.addEventListener('keydown',e=>{
+  if(['Shift','Alt','Control','Meta',' '].includes(e.key)&&!drag)clearCurveHover();
   if(document.querySelector('dialog[open]')||!$('context-menu').hidden)return;const editing=/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);if(editing)return;
   if(worker){if(e.key==='Escape')cancelTrace();return;}
   if(drag){if(e.key==='Escape'){e.preventDefault();cancelGesture();}return;}
@@ -437,7 +509,7 @@ window.addEventListener('keydown',e=>{
   if(k==='enter'){finishPen();return;}if(k==='j'){attempt(joinPaths);return;}if(k==='u'){attempt(()=>performBoolean('union'));return;}
   const tools={v:'select',n:'node',a:'add',p:'pen',k:'knife',c:'scissors',f:'fill',r:'rect',e:'ellipse',h:'pan'};if(tools[k])setTool(tools[k]);
 });
-window.addEventListener('keyup',e=>{if(e.code==='Space')space=false;});window.addEventListener('blur',()=>{space=false;if(drag)cancelGesture();else precision?.clearSnap();});
+window.addEventListener('keyup',e=>{if(e.code==='Space')space=false;});window.addEventListener('blur',()=>{space=false;clearCurveHover();if(drag)cancelGesture();else precision?.clearSnap();});
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
 let sizeInitialized=false;new ResizeObserver(()=>{if(!sizeInitialized){fit();sizeInitialized=true;}else{const r=workspace.getBoundingClientRect(),center={x:view.x+view.width/2,y:view.y+view.height/2},z=scale();view={x:center.x-r.width/z/2,y:center.y-r.height/z/2,width:r.width/z,height:r.height/z};updateView();}}).observe(workspace);
 const tracePreview=createTracePreview({

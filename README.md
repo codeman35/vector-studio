@@ -1,10 +1,18 @@
 # 线境 · Vector Studio
 
-纯前端、MIT 开源、浏览器本机处理的图片描摹与矢量路径编辑器。当前 **v0.5.0 预览版**。
+纯前端、MIT 开源、浏览器本机处理的图片描摹与矢量路径编辑器。当前 **v0.5.1 预览版**。
 
 在线：https://codeman35.github.io/vector-studio/
 
 发布以对应 Actions 的 build/deploy 成功和页面版本为准。更新前保存并下载项目备份；不要清除站点数据来刷新，否则本地项目可能丢失。
+
+## 0.5.1：弧线光标与固定端点拖动
+
+双击图形进入节点编辑，将鼠标移到两个节点之间的线条上。出现弧线与双向箭头光标、蓝色线段高亮后，按住左键向外拉或向内推。两个端点不动，只调整本段的两个控制手柄；直线同样可以拉弯，不增加节点。
+
+节点和控制手柄优先命中；远离轮廓线的内部/外部区域仍可框选。Shift 在非节点位置强制追加框选，Ctrl 点击曲线加点，Alt 点击节点删点。拖动超过 3 屏幕像素开始变形，单击不改几何。Escape 取消；松开后 Ctrl Z 一次撤销。拖回起点保持原几何。
+
+相邻线段保持不变，因此交接处可能变尖，需要时再手动平滑。不是联动修改整条轮廓，也不会替换保存过的颜色。
 
 ## 0.5.0：连续曲线、红色默认填充、对象内编辑
 
@@ -61,9 +69,10 @@ python scripts/browser-trace-curves.py
 python scripts/browser-sharing.py
 python scripts/browser-node-marquee.py
 python scripts/browser-editor-quality.py
+python scripts/browser-curve-drag.py
 python scripts/verify-psd.py
 ```
 
 Playwright/Chromium、psd-tools 仅为测试工具。根 index 为模块开发入口；dist/index.html 是固定模块图打包的单文件，包含 Worker 及重新计算的 CSP 哈希。长期修改 src，不直接改 dist。注入式浏览器测试不冒充同源 IndexedDB/网络验证。CI 保留持久化、分享、精确编辑、框选、曲线及 PSD 测试，通过后自动发布 main；PR 不部署。
 
-变更见 CHANGELOG.md，测试记录见 docs/TEST-REPORT-0.5.0.md。开发约定见 AGENTS.md。不提交私人图像、项目、密码或 Token。MIT 授权只覆盖软件，不赋予使用者第三方素材权利。
+变更见 CHANGELOG.md，测试记录见 docs/TEST-REPORT-0.5.1.md 和 docs/TEST-REPORT-0.5.0.md。开发约定见 AGENTS.md。不提交私人图像、项目、密码或 Token。MIT 授权只覆盖软件，不赋予使用者第三方素材权利。
