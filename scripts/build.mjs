@@ -21,14 +21,16 @@ const store=bundleModule(await read('src/project-store.js'),'VSStore');
 const library=bundleModule(await read('src/project-library.js'),'VSLibrary','const {openProjectDB,projectRecords,putProject,removeProject}=VSStore;const {validateDocument,uid,exportSVG}=VSDocument;');
 const ui=bundleModule(await read('src/editor-ui.js'),'VSUI','const {bounds,pathData}=VSGeometry;const {entries,members,expandSelection,rootId,selectedGroups}=VSGroups;');
 const psd=bundleModule(await read('src/psd.js'),'VSPsd','const {bounds,pathData}=VSGeometry;const {entries}=VSGroups;');
+const precision=bundleModule(await read('src/precision.js'),'VSPrecision');
+const precisionUI=bundleModule(await read('src/precision-ui.js'),'VSPrecisionUI','const {layoutUnits,layoutPlan,applyLayout,selectionColor,sameColorIds,anchorTargets,snapIndex}=VSPrecision;');
 let app=await read('src/app.js');
-const imports={geometry:'VSGeometry',groups:'VSGroups',document:'VSDocument','trace-preview':'VSPreview','project-library':'VSLibrary','editor-ui':'VSUI',psd:'VSPsd'};
+const imports={geometry:'VSGeometry',groups:'VSGroups',document:'VSDocument','trace-preview':'VSPreview','project-library':'VSLibrary','editor-ui':'VSUI',psd:'VSPsd','precision-ui':'VSPrecisionUI'};
 app=app.replace(/^import \* as (\w+) from '\.\/(.*?)\.js';$/gm,(_,name,file)=>`const ${name}=${imports[file]};`)
  .replace(/^import \{([^}]+)\} from '\.\/(.*?)\.js';$/gm,(_,names,file)=>`const {${names}}=${imports[file]};`)
  .replace("new Worker(new URL('./trace-worker.js',import.meta.url),{type:'module'})",'createLocalWorker()');
 if(/\bimport\.meta|^import |=undefined;/m.test(app))throw new Error('An unbundled import remains.');
 const bootstrap=`const workerSource=${JSON.stringify(worker)};\nfunction createLocalWorker(){const url=URL.createObjectURL(new Blob([workerSource],{type:'text/javascript'}));const instance=new Worker(url);setTimeout(()=>URL.revokeObjectURL(url),1000);return instance;}`;
-const js=`(()=>{'use strict';\n${geometry}\n${groups}\n${documentModule}\n${preview}\n${store}\n${library}\n${ui}\n${psd}\n${bootstrap}\n${app}\n})();`;
+const js=`(()=>{'use strict';\n${geometry}\n${groups}\n${documentModule}\n${preview}\n${store}\n${library}\n${ui}\n${psd}\n${precision}\n${precisionUI}\n${bootstrap}\n${app}\n})();`;
 const hash=createHash('sha256').update(js).digest('base64');
 const css=await read('src/style.css')+'\n'+await read('src/workspace.css');
 let html=await read('index.html');

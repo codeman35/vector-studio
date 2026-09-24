@@ -1,3 +1,4 @@
+import {createPrecisionTools} from './precision-ui.js';
 import * as G from './geometry.js';
 import * as Groups from './groups.js';
 import {createProjectLibrary} from './project-library.js';
@@ -10,6 +11,7 @@ const canvas=$('editor'),workspace=$('workspace');
 let doc=createDocument(),history=new History(doc),selection=new Set(),nodeSelection=new Set();
 let tool='select',outline=false,showReference=true,fillColor='#247a70',dirty=false,drawingId=null;
 let view={x:-100,y:-100,width:1200,height:900},drag=null,space=false,worker=null,referenceRevision=0,saveTimer=null,toastTimer=null;
+let precision=null;
 let savedDraft=null,interacted=false,savedState=JSON.stringify(doc),exporting=false;
 const hints={select:'双击图形进入节点编辑；Shift 多选；群组整体移动；右键打开操作菜单。',node:'Ctrl 点击曲线加点；Alt 点击节点减点；Alt 拖动手柄独立调整；Esc 返回选择。',add:'点击曲线增加节点，保持曲线原有形状。',pen:'逐点点击绘制；点击起点闭合；Enter 结束开放路径。',knife:'只切割拖动起点到终点之间的线段；须贯穿区域，不向两端延伸。优先切割已选对象。',scissors:'点击曲线剪断单条路径；分割色块请用「切割」。',fill:'点击现有闭合对象，应用当前填充颜色。',rect:'拖动绘制矩形。Shift 限制为正方形。',ellipse:'拖动绘制椭圆。Shift 限制为圆。',pan:'拖动画布平移；滚轮以鼠标位置为中心缩放。'};
 const selected=()=>doc.shapes.filter(s=>selection.has(s.id)&&s.visible&&!s.locked);
@@ -23,12 +25,12 @@ function toast(message,error=false){clearTimeout(toastTimer);$('toast').textCont
 function attempt(fn){try{const result=fn();if(result?.then)result.catch(e=>{toast(e.message||String(e),true);console.error(e);});return result;}catch(e){toast(e.message||String(e),true);console.error(e);return null;}}
 async function attemptAsync(fn){try{return await fn();}catch(e){toast(e.message||String(e),true);console.error(e);return null;}}
 function tab(name){document.querySelectorAll('[data-tab]').forEach(b=>{const active=b.dataset.tab===name;b.classList.toggle('active',active);b.setAttribute('aria-selected',active);$('panel-'+b.dataset.tab).hidden=!active;});tracePreview.setVisible(name==='trace');}
-function setTool(next){if(worker)return;const allowed=capabilities(doc,selection,nodeSelection.size);if(next in allowed&&!allowed[next]){toast('还没有适合此工具的可编辑矢量对象，请先生成轮廓或绘图。');return;}if(drawingId&&next!==tool)finishPen();tool=next;canvas.dataset.tool=tool;document.querySelectorAll('[data-tool]').forEach(b=>b.classList.toggle('active',b.dataset.tool===tool));$('tool-hint').textContent=hints[tool];if(['node','fill','add','scissors'].includes(tool))tab('properties');if(tool!=='node'&&tool!=='add')nodeSelection.clear();render();}
-function updateView(){canvas.setAttribute('viewBox',`${view.x} ${view.y} ${view.width} ${view.height}`);$('zoom-value').textContent=Math.round(scale()*100)+'%';renderOverlay();}
+function setTool(next){if(worker)return;precision?.clearSnap();const allowed=capabilities(doc,selection,nodeSelection.size);if(next in allowed&&!allowed[next]){toast('还没有适合此工具的可编辑矢量对象，请先生成轮廓或绘图。');return;}if(drawingId&&next!==tool)finishPen();tool=next;canvas.dataset.tool=tool;document.querySelectorAll('[data-tool]').forEach(b=>b.classList.toggle('active',b.dataset.tool===tool));$('tool-hint').textContent=hints[tool];if(['node','fill','add','scissors'].includes(tool))tab('properties');if(tool!=='node'&&tool!=='add')nodeSelection.clear();render();}
+function updateView(){canvas.setAttribute('viewBox',`${view.x} ${view.y} ${view.width} ${view.height}`);$('zoom-value').textContent=Math.round(scale()*100)+'%';renderOverlay();precision?.render();}
 function fit(){const r=workspace.getBoundingClientRect(),s=Math.min((r.width-100)/doc.width,(r.height-115)/doc.height);const z=Math.max(.025,s);view={x:(doc.width-r.width/z)/2,y:(doc.height-r.height/z)/2,width:r.width/z,height:r.height/z};updateView();}
 function zoom(factor,at){const r=workspace.getBoundingClientRect();at=at||{x:view.x+view.width/2,y:view.y+view.height/2};const newScale=scale()/factor;if(newScale<.025||newScale>30)return;view={x:at.x-(at.x-view.x)*factor,y:at.y-(at.y-view.y)*factor,width:view.width*factor,height:view.height*factor};updateView();}
 function commit(message){Groups.pruneGroups(doc);history.push(doc);dirty=JSON.stringify(doc)!==savedState;selection=new Set([...selection].filter(id=>byId(id)));nodeSelection=new Set([...nodeSelection].filter(key=>{const[id,ri,ni]=key.split('|');return selection.has(id)&&!!byId(id)?.rings[+ri]?.nodes[+ni];}));render();scheduleDraft();if(message)status(message);}
-function restore(state){if(!state)return;cancelTrace(false);doc=state;selection.clear();nodeSelection.clear();drawingId=null;dirty=JSON.stringify(doc)!==savedState;referenceRevision++;syncReference();render();scheduleDraft();}
+function restore(state){if(!state)return;precision?.clearSnap();cancelTrace(false);doc=state;selection.clear();nodeSelection.clear();drawingId=null;dirty=JSON.stringify(doc)!==savedState;referenceRevision++;syncReference();render();scheduleDraft();}
 function render(){
   const layer=$('objects'),existing=new Map([...layer.children].map(p=>[p.getAttribute('data-id'),p]));let position=0;
   for(const s of doc.shapes){if(!s.visible)continue;let p=existing.get(s.id);if(!p)p=svg('path');existing.delete(s.id);
@@ -48,7 +50,7 @@ function render(){
   $('outline-btn').setAttribute('aria-pressed',outline);$('reference-btn').setAttribute('aria-pressed',showReference);
   $('reference').setAttribute('opacity',showReference?(doc.shapes.length?.28:1):0);
   $('rail-color').style.background=fillColor;
-  renderOverlay();renderLayers();renderProperties();tracePreview.render();renderCommandState();
+  renderOverlay();renderLayers();renderProperties();tracePreview.render();renderCommandState();precision?.render();
 }
 function renderOverlay(){
   const group=$('overlays');group.replaceChildren();const z=scale();
@@ -106,13 +108,13 @@ canvas.addEventListener('pointerdown',event=>attempt(()=>{
     if(event.ctrlKey||event.metaKey){const hit=findCurve(p,id);if(hit)addNodeAt(hit);return;}
   }
   if(['rect','ellipse','knife'].includes(tool)){drag={type:tool,start:p,current:p};return;}
-  if(tool==='pen'){penPoint(p);return;}
+  if(tool==='pen'){penPoint(precision.snapPen(p,event));precision.clearSnap();return;}
   if(tool==='fill'){if(id){const s=byId(id);if(!s.rings.every(r=>r.closed)){toast('开放路径请先闭合后填色。');return;}s.fill=fillColor;selection=new Set([id]);commit('已填色');}return;}
   const hkey=event.target.getAttribute('data-handle'),nkey=event.target.getAttribute('data-node');
   if(hkey&&tool==='node'){const [sid,ri,ni,side]=hkey.split('|');const n=byId(sid).rings[+ri].nodes[+ni];nodeSelection=new Set([keyFor(sid,+ri,+ni)]);drag={type:'handle',sid,ri:+ri,ni:+ni,side,otherLength:Math.hypot(n[side==='in'?'out':'in'].x,n[side==='in'?'out':'in'].y),start:p};renderOverlay();return;}
   if(nkey&&tool==='node'){
-    if(event.shiftKey){if(nodeSelection.has(nkey))nodeSelection.delete(nkey);else nodeSelection.add(nkey);}else if(!nodeSelection.has(nkey))nodeSelection=new Set([nkey]);
-    drag={type:'nodes',start:p,original:new Map([...nodeSelection].map(k=>{const[sid,ri,ni]=k.split('|');return [k,G.clone(byId(sid).rings[+ri].nodes[+ni])];}))};renderOverlay();return;
+    if(event.shiftKey){if(nodeSelection.has(nkey)){nodeSelection.delete(nkey);renderOverlay();return;}else nodeSelection.add(nkey);}else if(!nodeSelection.has(nkey))nodeSelection=new Set([nkey]);
+    drag={type:'nodes',anchorKey:nkey,start:p,original:new Map([...nodeSelection].map(k=>{const[sid,ri,ni]=k.split('|');return [k,G.clone(byId(sid).rings[+ri].nodes[+ni])];}))};renderOverlay();return;
   }
   if(tool==='add'||tool==='scissors'){
     const hit=findCurve(p,id);if(!hit)return;
@@ -130,12 +132,12 @@ canvas.addEventListener('pointerdown',event=>attempt(()=>{
 }));
 canvas.addEventListener('pointermove',event=>attempt(()=>{
   if(worker)return;const p=point(event);
-  if(!drag){if(drawingId){const n=byId(drawingId)?.rings[0].nodes.at(-1);if(n){$('gesture').replaceChildren(svg('line',{x1:n.x,y1:n.y,x2:p.x,y2:p.y,stroke:'#4b9a87','stroke-width':1/scale(),'stroke-dasharray':`${4/scale()} ${3/scale()}`}));}}return;}
+  if(!drag){if(drawingId){const snapped=precision.snapPen(p,event);const n=byId(drawingId)?.rings[0].nodes.at(-1);if(n){$('gesture').replaceChildren(svg('line',{x1:n.x,y1:n.y,x2:snapped.x,y2:snapped.y,stroke:'#4b9a87','stroke-width':1/scale(),'stroke-dasharray':`${4/scale()} ${3/scale()}`}));}}return;}
   drag.current=p;
   if(drag.type==='pan'){const z=scale();view={...drag.view,x:drag.view.x-(event.clientX-drag.client.x)/z,y:drag.view.y-(event.clientY-drag.client.y)/z};updateView();return;}
   if(drag.type==='move'){let delta=G.sub(p,drag.start);if(event.shiftKey)delta=Math.abs(delta.x)>Math.abs(delta.y)?G.vec(delta.x,0):G.vec(0,delta.y);for(const [id,orig]of drag.original){const s=byId(id);s.rings=G.clone(orig.rings);G.translate(s,delta);}render();return;}
   if(drag.type==='nodes'){
-    const delta=G.sub(p,drag.start);for(const [key,orig]of drag.original){const[id,ri,ni]=key.split('|'),n=byId(id).rings[+ri].nodes[+ni];n.x=orig.x+delta.x;n.y=orig.y+delta.y;}render();return;
+    const delta=precision.snapNode(drag,p,event);for(const [key,orig]of drag.original){const[id,ri,ni]=key.split('|'),n=byId(id).rings[+ri].nodes[+ni];n.x=orig.x+delta.x;n.y=orig.y+delta.y;}render();return;
   }
   if(drag.type==='handle'){
     const n=byId(drag.sid).rings[drag.ri].nodes[drag.ni];let delta=G.sub(p,n);if(event.shiftKey){const a=Math.round(Math.atan2(delta.y,delta.x)/(Math.PI/4))*Math.PI/4,len=Math.hypot(delta.x,delta.y);delta=G.vec(Math.cos(a)*len,Math.sin(a)*len);}n[drag.side]=delta;
@@ -147,9 +149,12 @@ function drawGesture(square=false){const group=$('gesture');group.replaceChildre
   let w=p.x-a.x,h=p.y-a.y;if(square&&['rect','ellipse'].includes(drag.type)){const m=Math.max(Math.abs(w),Math.abs(h));w=Math.sign(w||1)*m;h=Math.sign(h||1)*m;drag.current=G.add(a,G.vec(w,h));}const b={x:Math.min(a.x,a.x+w),y:Math.min(a.y,a.y+h),width:Math.abs(w),height:Math.abs(h)};
   group.append(svg(drag.type==='ellipse'?'ellipse':'rect',{...(drag.type==='ellipse'?{cx:b.x+b.width/2,cy:b.y+b.height/2,rx:b.width/2,ry:b.height/2}:b),fill:drag.type.includes('box')?'#2f927215':fillColor+'33',stroke:'#348e7c','stroke-width':1/z,'stroke-dasharray':`${4/z} ${3/z}`}));}
 canvas.addEventListener('pointerup',event=>attempt(()=>{
-  if(!drag)return;const d=drag;drag=null;$('gesture').replaceChildren();
+  if(!drag)return;
+  // Re-evaluate the final pointer position, even if no final pointermove arrived.
+  if(drag.type==='nodes'&&G.dist(drag.start,point(event))>.01){const delta=precision.snapNode(drag,point(event),event);for(const[key,orig]of drag.original){const[id,ri,ni]=key.split('|'),n=byId(id).rings[+ri].nodes[+ni];n.x=orig.x+delta.x;n.y=orig.y+delta.y;}}
+  const d=drag;drag=null;precision.clearSnap();$('gesture').replaceChildren();
   if(d.type==='pan')return;const p=d.current||point(event);
-  if(['move','nodes','handle'].includes(d.type)){if(G.dist(d.start,point(event))>.01)commit('已调整形状');return;}
+  if(['move','nodes','handle'].includes(d.type)){if(G.dist(d.start,point(event))>.01)commit('已调整形状');else render();return;}
   if(d.type==='box'||d.type==='node-box'){
     const b={x:Math.min(d.start.x,p.x),y:Math.min(d.start.y,p.y),width:Math.abs(p.x-d.start.x),height:Math.abs(p.y-d.start.y)};
     if(d.type==='box'){selection=d.previous;for(const s of doc.shapes){if(!s.visible||s.locked)continue;const a=G.bounds(s);if(a.x<=b.x+b.width&&a.x+a.width>=b.x&&a.y<=b.y+b.height&&a.y+a.height>=b.y){const group=Groups.expandSelection(doc,[s.id]);if([...group].every(id=>byId(id).visible&&!byId(id).locked))for(const id of group)selection.add(id);}}}
@@ -160,7 +165,9 @@ canvas.addEventListener('pointerup',event=>attempt(()=>{
   const x=Math.min(d.start.x,p.x),y=Math.min(d.start.y,p.y),w=Math.abs(p.x-d.start.x),h=Math.abs(p.y-d.start.y);if(w<.1||h<.1)return;
   const s=d.type==='rect'?rectangle(x,y,w,h,{fill:fillColor,name:'矩形'}):ellipse(x+w/2,y+h/2,w/2,h/2,{fill:fillColor,name:'椭圆'});doc.shapes.push(s);selection=new Set([s.id]);commit('已创建图形');setTool('select');tab('properties');
 }));
-canvas.addEventListener('pointercancel',()=>{if(drag&&['move','nodes','handle'].includes(drag.type)){const state=JSON.parse(history.states[history.index]);doc=state;}drag=null;$('gesture').replaceChildren();render();});
+function cancelGesture(){if(drag&&['move','nodes','handle'].includes(drag.type)){doc=JSON.parse(history.states[history.index]);}drag=null;precision?.clearSnap();$('gesture').replaceChildren();render();}
+canvas.addEventListener('pointercancel',cancelGesture);
+canvas.addEventListener('lostpointercapture',()=>{if(drag)cancelGesture();});
 canvas.addEventListener('dblclick',e=>attempt(()=>{
   if(worker||!['node','select'].includes(tool)||e.ctrlKey||e.metaKey||e.altKey)return;
   const id=e.target.closest('[data-id]')?.getAttribute('data-id')||e.target.getAttribute('data-node')?.split('|')[0]||shapeAt(point(e))?.id||findCurve(point(e))?.shape.id;
@@ -192,7 +199,7 @@ function penPoint(p){
   if(r.nodes.length>=3&&G.dist(p,r.nodes[0])<9/scale()){r.closed=true;s.fill=fillColor;s.stroke='none';s.strokeWidth=0;finishPen();return;}
   r.nodes.push(G.node(p.x,p.y));render();
 }
-function finishPen(){if(!drawingId)return;const s=byId(drawingId);if(s.rings[0].nodes.length<2)doc.shapes=doc.shapes.filter(o=>o.id!==drawingId);drawingId=null;$('gesture').replaceChildren();commit('已完成钢笔路径');}
+function finishPen(){if(!drawingId)return;precision?.clearSnap();const s=byId(drawingId);if(s.rings[0].nodes.length<2)doc.shapes=doc.shapes.filter(o=>o.id!==drawingId);drawingId=null;$('gesture').replaceChildren();commit('已完成钢笔路径');}
 function scissors(hit){
   const s=hit.shape;if(s.rings.length!==1)throw new Error('复合镂空图形请用「切割」；剪断只支持单条路径。');
   const r=s.rings[0];const ni=G.insertNode(r,hit.index,Math.max(.001,Math.min(.999,hit.t)));
@@ -315,7 +322,7 @@ function showContext(event,layerIds=null){
     command('hide','隐藏所选',raw.some(s=>s.visible),()=>{raw.forEach(s=>s.visible=false);selection.clear();commit('已隐藏对象');}),
     command('lock',raw.some(s=>s.locked)?'解锁所选':'锁定所选',true,()=>{const locked=!raw.some(s=>s.locked);raw.forEach(s=>s.locked=locked);selection.clear();commit(locked?'已锁定对象':'已解锁对象');}));
   }else{items.push(command('select-all','选择全部矢量',c.node,()=>{selection=new Set(doc.shapes.filter(s=>s.visible&&!s.locked).map(s=>s.id));render();},'Ctrl A'),command('import','导入图片 / 项目',true,()=>{$('file-input').value='';$('file-input').click();}),command('paste-image','粘贴图片',true,()=>$('paste-btn').click(),'Ctrl V'),command('projects','打开项目库',true,()=>library.show()));}
-  items.push(null,command('fit','适合画布',true,fit));contextMenu.show(event,items);
+  items.push(...precision.contextItems());items.push(null,command('fit','适合画布',true,fit));contextMenu.show(event,items);
 }
 
 // DOM bindings. Binding through a single gate keeps edits disabled while tracing.
@@ -353,6 +360,7 @@ workspace.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.drop
 window.addEventListener('keydown',e=>{
   if(document.querySelector('dialog[open]')||!$('context-menu').hidden)return;const editing=/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);if(editing)return;
   if(worker){if(e.key==='Escape')cancelTrace();return;}
+  if(drag){if(e.key==='Escape'){e.preventDefault();cancelGesture();}return;}
   const mod=e.ctrlKey||e.metaKey,k=e.key.toLowerCase();
   if(mod&&k==='s'){e.preventDefault();attempt(saveProject);return;}if(mod&&k==='g'){e.preventDefault();const c=capabilities(doc,selection);if(e.shiftKey?c.ungroup:c.group)attempt(e.shiftKey?ungroupSelected:groupSelected);return;}if(mod&&k==='d'){e.preventDefault();if(selected().length)attempt(duplicateSelected);return;}if(mod&&k==='z'){e.preventDefault();restore(e.shiftKey?history.redo():history.undo());return;}if(mod&&k==='y'){e.preventDefault();restore(history.redo());return;}
   if(mod&&k==='a'){e.preventDefault();if(tool==='node'&&selected().length){nodeSelection.clear();for(const s of selected())s.rings.forEach((r,ri)=>r.nodes.forEach((_,ni)=>nodeSelection.add(keyFor(s.id,ri,ni))));}else selection=new Set(doc.shapes.filter(s=>s.visible&&!s.locked).map(s=>s.id));render();return;}
@@ -361,7 +369,7 @@ window.addEventListener('keydown',e=>{
   if(k==='enter'){finishPen();return;}if(k==='j'){attempt(joinPaths);return;}if(k==='u'){attempt(()=>performBoolean('union'));return;}
   const tools={v:'select',n:'node',a:'add',p:'pen',k:'knife',c:'scissors',f:'fill',r:'rect',e:'ellipse',h:'pan'};if(tools[k])setTool(tools[k]);
 });
-window.addEventListener('keyup',e=>{if(e.code==='Space')space=false;});window.addEventListener('blur',()=>space=false);
+window.addEventListener('keyup',e=>{if(e.code==='Space')space=false;});window.addEventListener('blur',()=>{space=false;if(drag)cancelGesture();else precision?.clearSnap();});
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
 let sizeInitialized=false;new ResizeObserver(()=>{if(!sizeInitialized){fit();sizeInitialized=true;}else{const r=workspace.getBoundingClientRect(),center={x:view.x+view.width/2,y:view.y+view.height/2},z=scale();view={x:center.x-r.width/z/2,y:center.y-r.height/z/2,width:r.width/z,height:r.height/z};updateView();}}).observe(workspace);
 const tracePreview=createTracePreview({
@@ -377,6 +385,8 @@ const library=createProjectLibrary({getDocument:()=>doc,isDirty:()=>dirty,before
   onOpen:next=>{cancelTrace(false);doc=next;savedState=JSON.stringify(doc);history.reset(doc);dirty=false;selection.clear();nodeSelection.clear();drawingId=null;referenceRevision++;syncReference();setTool('select');render();fit();scheduleDraft();toast('项目已切换');},
   onError:error=>toast(error.message||'本地存储不可用，请下载项目备份',true)
 });
+precision=createPrecisionTools({getState:()=>({doc,selection,busy:!!worker||exporting,dragging:!!drag,drawing:drawingId}),getScale:scale,
+  select:ids=>{tracePreview.hide();selection=ids;nodeSelection.clear();setTool('select');tab('properties');},commit,refresh:render,notice:toast,showProperties:()=>tab('properties')});
 modeFields();syncReference();setTool('select');render();fit();loadDraft();
 // Read-only diagnostics for browser tests / bug reports, not a remote API.
-Object.defineProperty(window,'vectorStudio',{value:Object.freeze({version:VERSION,snapshot:()=>G.clone(doc),selection:()=>[...selection],getTool:()=>tool,preview:()=>tracePreview.diagnostics(),dirty:()=>dirty,activeProject:()=>library.activeId()}),writable:false});
+Object.defineProperty(window,'vectorStudio',{value:Object.freeze({version:VERSION,snapshot:()=>G.clone(doc),selection:()=>[...selection],getTool:()=>tool,preview:()=>tracePreview.diagnostics(),dirty:()=>dirty,activeProject:()=>library.activeId(),precision:()=>precision.diagnostics()}),writable:false});

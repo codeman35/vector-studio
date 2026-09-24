@@ -4,11 +4,12 @@
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#246c61"><meta name="description" content="开源图片描摹与 SVG 节点编辑器。图片在本机浏览器处理，不上传。">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
-<title>线境 · Vector Studio</title><link rel="stylesheet" href="./src/style.css"><link rel="stylesheet" href="./src/workspace.css">
+<title>线境 · Vector Studio</title><link rel="stylesheet" href="./src/style.css">
+<link rel="stylesheet" href="./src/workspace.css">
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><svg width="31" height="31" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="#256e63"/><path d="M8 23C9 5 24 27 24 9M8 23L8 14M24 9L24 18" stroke="white" stroke-width="1.8" fill="none"/><rect x="5.5" y="20.5" width="5" height="5" rx="1" fill="white"/><rect x="21.5" y="6.5" width="5" height="5" rx="1" fill="white"/></svg><div><strong>线境</strong><span>VECTOR STUDIO</span></div><small class="version">0.2.0 预览版</small></div>
+  <div class="brand"><svg width="31" height="31" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="#256e63"/><path d="M8 23C9 5 24 27 24 9M8 23L8 14M24 9L24 18" stroke="white" stroke-width="1.8" fill="none"/><rect x="5.5" y="20.5" width="5" height="5" rx="1" fill="white"/><rect x="21.5" y="6.5" width="5" height="5" rx="1" fill="white"/></svg><div><strong>线境</strong><span>VECTOR STUDIO</span></div><small class="version">0.2.1 预览版</small></div>
   <div class="project-title"><input id="document-name" value="未命名图案" aria-label="项目名称" maxlength="80"><span id="save-state">尚未修改</span></div>
   <div class="header-actions"><button id="projects-btn">项目库</button><button id="open-btn" title="导入 PNG / JPG / WebP，或打开 .vstudio 项目">打开</button><button id="backup-btn" title="下载 .vstudio，跨设备备份">下载项目</button><button id="save-btn" title="Ctrl + S">保存项目</button><button id="export-btn" class="primary">导出文件 <span>↗</span></button><button id="help-btn" class="icon-only" aria-label="使用帮助">?</button></div>
 </header>
