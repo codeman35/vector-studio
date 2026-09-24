@@ -13,7 +13,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -24,6 +24,22 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm run build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # These packages are only test tools; the website has no runtime dependencies.
+      - run: python -m pip install playwright==1.57.0 psd-tools==1.19.0
+      - run: python -m playwright install --with-deps chromium
+      - name: Browser workspace and persistent project tests
+        run: python scripts/browser-workspace.py
+      - name: Independent PSD format check
+        run: python scripts/verify-psd.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-test-artifacts
+          path: artifacts
+          retention-days: 7
       - uses: actions/upload-pages-artifact@v4
         if: github.event_name != 'pull_request'
         with:

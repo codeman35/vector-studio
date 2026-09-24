@@ -1,0 +1,26 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createDocument,rectangle,ellipse,validateDocument,exportSVG,History} from '../src/document.js';
+import * as Groups from '../src/groups.js';
+import {capabilities} from '../src/editor-ui.js';
+const fixture=()=>({...createDocument(),shapes:[rectangle(0,0,20,20,{id:'a'}),ellipse(40,10,10,10,{id:'b'}),rectangle(60,0,20,20,{id:'c'})]});
+test('v1 migrates to v2 without changing geometry',()=>{const d=fixture();d.version=1;delete d.groups;const next=validateDocument(d);assert.equal(next.version,2);assert.deepEqual(next.groups,[]);assert.deepEqual(next.shapes,d.shapes);});
+test('group is not boolean union; curves remain byte-for-byte',()=>{const d=fixture(),before=d.shapes.map(s=>JSON.stringify(s.rings));Groups.createGroup(d,['a','b']);assert.equal(d.groups.length,1);assert.deepEqual(d.shapes.map(s=>JSON.stringify(s.rings)),before);assert.deepEqual([...Groups.expandSelection(d,['a'])],['a','b']);});
+test('nested groups ungroup one level at a time',()=>{const d=fixture();Groups.createGroup(d,['a','b']);const first=d.groups[0].id;Groups.createGroup(d,['a','c']);assert.equal(d.groups.length,2);assert.equal(Groups.ancestors(d,d.shapes[0]).length,2);Groups.ungroup(d,['a','b','c']);assert.equal(d.groups.length,1);assert.equal(d.groups[0].id,first);Groups.ungroup(d,['a','b']);assert.equal(d.groups.length,0);assert.ok(d.shapes.every(s=>!s.groupId));});
+test('group selection makes noncontiguous siblings a block',()=>{const d=fixture();Groups.createGroup(d,['a','c']);assert.deepEqual(d.shapes.map(s=>s.id),['b','a','c']);assert.doesNotThrow(()=>validateDocument(d));});
+test('locked or hidden member blocks regrouping',()=>{const d=fixture();Groups.createGroup(d,['a','b']);d.shapes[0].locked=true;assert.throws(()=>Groups.createGroup(d,['b','c']));});
+test('group duplication uses distinct IDs and preserves handles',()=>{const d=fixture();Groups.createGroup(d,['a','b']);const original=structuredClone(d);const ids=Groups.duplicateSelection(d,['a']);assert.equal(ids.size,2);assert.equal(d.groups.length,2);assert.equal(d.shapes.length,5);assert.deepEqual(d.shapes[4].rings[0].nodes[0].out,original.shapes[1].rings[0].nodes[0].out);assert.equal(d.shapes[4].rings[0].nodes[0].x,original.shapes[1].rings[0].nodes[0].x+16);assert.doesNotThrow(()=>validateDocument(d));});
+test('reorder operates on complete group blocks',()=>{const d=fixture();Groups.createGroup(d,['a','b']);Groups.reorderSelection(d,['a'],1);assert.deepEqual(d.shapes.map(s=>s.id),['c','a','b']);Groups.reorderSelection(d,['b'],-1,true);assert.deepEqual(d.shapes.map(s=>s.id),['a','b','c']);});
+test('SVG exports real nested g containers and escaped names',()=>{const d=fixture();Groups.createGroup(d,['a','b'],'<group>');Groups.createGroup(d,['a','c']);const svg=exportSVG(d);assert.equal((svg.match(/<g /g)||[]).length,2);assert.equal((svg.match(/<path /g)||[]).length,3);assert.ok(svg.includes('&lt;group&gt;'));assert.ok(!svg.includes('<image'));});
+test('bad cycles, missing groups, stack interleaving are rejected',()=>{const d=fixture();d.groups=[{id:'g',name:'g',parentId:'g'}];assert.throws(()=>validateDocument(d));d.groups=[];d.shapes[0].groupId='missing';assert.throws(()=>validateDocument(d));d.groups=[{id:'g',name:'g'}];d.shapes[0].groupId=d.shapes[2].groupId='g';assert.throws(()=>validateDocument(d));});
+test('group removal and undo restore exact topology',()=>{const d=fixture(),h=new History(d);Groups.createGroup(d,['a','b']);h.push(d);const id=d.groups[0].id;d.shapes=d.shapes.filter(s=>s.groupId!==id);Groups.pruneGroups(d);h.push(d);assert.equal(d.groups.length,0);const previous=h.undo();assert.equal(previous.groups.length,1);assert.doesNotThrow(()=>validateDocument(previous));});
+test('pre-trace commands disabled, manual drawing unlocks editing',()=>{const d=createDocument();let c=capabilities(d,new Set());for(const k of ['node','add','fill','knife','export','group','boolean'])assert.equal(c[k],false,k);d.shapes.push(rectangle(1,1,20,20,{id:'x'}));c=capabilities(d,new Set(['x']));assert.equal(c.node,true);assert.equal(c.export,true);assert.equal(c.boolean,false);d.shapes.push(rectangle(2,2,20,20,{id:'y'}));c=capabilities(d,new Set(['x','y']));assert.equal(c.group,true);assert.equal(c.boolean,true);});
+test('busy state prevents geometry commands',()=>{const c=capabilities(fixture(),new Set(['a','b']),1,true);assert.ok(Object.values(c).every(v=>v===false));});
+test('replacement of group operands retains a contiguous common parent',()=>{
+ const d=fixture();d.shapes.push(rectangle(0,40,20,20,{id:'d'}));Groups.createGroup(d,['a','b']);Groups.createGroup(d,['c','d']);Groups.createGroup(d,['a','c']);
+ const result=rectangle(0,0,70,40,{id:'new'});Groups.replaceShapes(d,['b','c'],[result]);assert.doesNotThrow(()=>validateDocument(d));assert.equal(Groups.ancestors(d,result).length,1);
+});
+test('joining across separate root groups never corrupts remaining members',()=>{
+ const d=fixture();d.shapes.push(rectangle(0,40,20,20,{id:'d'}));Groups.createGroup(d,['a','b']);Groups.createGroup(d,['c','d']);
+ const result=rectangle(0,0,70,40,{id:'new'});Groups.replaceShapes(d,['b','c'],[result]);assert.doesNotThrow(()=>validateDocument(d));assert.equal(result.groupId,undefined);assert.deepEqual(d.shapes.map(s=>s.id),['a','d','new']);
+});

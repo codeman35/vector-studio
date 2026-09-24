@@ -22,6 +22,7 @@ with sync_playwright() as p:
    page.wait_for_timeout(100)
   raise AssertionError('Timed out: '+expression+'; toast: '+page.locator('#toast').inner_text())
  page.on('dialog',lambda d:d.accept())
+ page.add_locator_handler(page.locator('#unsaved-dialog'),lambda:page.click('#switch-discard'))
  page.set_content((ROOT/'dist/index.html').read_text(),wait_until='load')
  wait('window.vectorStudio!==undefined')
  page.screenshot(path=str(out/'welcome.png'))
@@ -36,7 +37,9 @@ with sync_playwright() as p:
  after=page.evaluate('window.vectorStudio.snapshot().shapes[1].rings[0].nodes[0].x')
  assert after!=before,(before,after)
  page.click('#undo-btn');assert page.evaluate('window.vectorStudio.snapshot().shapes[1].rings[0].nodes[0].x')==before
- with page.expect_download() as di:page.click('#export-btn')
+ page.click('#export-btn')
+ with page.expect_download() as di:page.click('#export-svg')
+ page.click('#close-export')
  di.value.save_as(str(out/'example.svg'))
  svg=(out/'example.svg').read_text();assert '<image' not in svg and '<path' in svg and 'fill-rule="evenodd"' in svg
  page.click('#new-btn');page.click('#raster-demo-btn')
@@ -49,7 +52,7 @@ with sync_playwright() as p:
  assert len(snap['shapes'])==2
  assert any(len(s['rings'])==2 for s in snap['shapes'])
  page.screenshot(path=str(out/'traced.png'))
- with page.expect_download() as info:page.click('#save-btn')
+ with page.expect_download() as info:page.click('#backup-btn')
  info.value.save_as(str(out/'traced.vstudio'))
  page.click('#new-btn');page.locator('#file-input').set_input_files(str(out/'traced.vstudio'))
  wait('window.vectorStudio.snapshot().shapes.length===2')

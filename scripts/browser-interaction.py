@@ -9,7 +9,6 @@ ARTIFACTS=ROOT/'artifacts'
 ARTIFACTS.mkdir(exist_ok=True)
 from playwright.sync_api import sync_playwright
 root=ROOT;out=ARTIFACTS
-
 def shape(sid,x,y,w,h):
  return {'id':sid,'name':sid,'fill':'#247a70','stroke':'none','strokeWidth':0,'visible':True,'locked':False,'rings':[{'closed':True,'nodes':[{'x':a,'y':b,'in':{'x':0,'y':0},'out':{'x':0,'y':0}} for a,b in [(x,y),(x+w,y),(x+w,y+h),(x,y+h)]]}]}
 fixture={'format':'vector-studio','version':1,'name':'UI test','width':600,'height':400,'image':None,'shapes':[shape('first',100,100,180,180),shape('second',220,100,180,180)]}
@@ -17,6 +16,7 @@ fixture={'format':'vector-studio','version':1,'name':'UI test','width':600,'heig
 with sync_playwright() as p:
  b=p.chromium.launch(executable_path=os.environ.get('CHROMIUM_EXECUTABLE') or shutil.which('chromium'),headless=True,args=['--no-sandbox'])
  page=b.new_page(viewport={'width':1500,'height':980})
+ page.set_default_timeout(5000)
  errors=[];page.on('pageerror',lambda e:errors.append(str(e)));page.on('dialog',lambda d:d.accept())
  page.set_content((root/'dist/index.html').read_text())
  def wait(exp):
@@ -48,6 +48,8 @@ with sync_playwright() as p:
  page.screenshot(path=str(out/'interaction.png'))
  # Synthetic clipboard event covers paste handler, not OS clipboard permissions.
  page.click('#new-btn')
+ if page.locator('#unsaved-dialog').is_visible():page.click('#switch-discard')
+ wait('window.vectorStudio.snapshot().shapes.length===0')
  page.evaluate('''async()=>{const c=document.createElement('canvas');c.width=50;c.height=50;const ctx=c.getContext('2d');ctx.fillStyle='white';ctx.fillRect(0,0,50,50);ctx.fillStyle='black';ctx.fillRect(10,10,30,30);const blob=await new Promise(r=>c.toBlob(r));const dt=new DataTransfer();dt.items.add(new File([blob],'paste.png',{type:'image/png'}));window.dispatchEvent(new ClipboardEvent('paste',{clipboardData:dt}));}''')
  wait('window.vectorStudio.snapshot().image!==null');page.click('#trace-btn');wait('window.vectorStudio.snapshot().shapes.length===1')
  # Color mode uses a real Worker, re-trace replaces old trace objects.
