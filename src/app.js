@@ -1,4 +1,7 @@
 import {createPrecisionTools} from './precision-ui.js';
+import {holeAt,removeContours,pickEditorPoint} from './contours.js';
+import {createContourPanel} from './contour-ui.js';
+import {createPublicLibrary} from './public-library.js';
 import * as G from './geometry.js';
 import * as Groups from './groups.js';
 import {createProjectLibrary} from './project-library.js';
@@ -11,7 +14,7 @@ const canvas=$('editor'),workspace=$('workspace');
 let doc=createDocument(),history=new History(doc),selection=new Set(),nodeSelection=new Set();
 let tool='select',outline=false,showReference=true,fillColor='#247a70',dirty=false,drawingId=null;
 let view={x:-100,y:-100,width:1200,height:900},drag=null,space=false,worker=null,referenceRevision=0,saveTimer=null,toastTimer=null;
-let precision=null;
+let precision=null,contourPanel=null;
 let savedDraft=null,interacted=false,savedState=JSON.stringify(doc),exporting=false;
 const hints={select:'双击图形进入节点编辑；Shift 多选；群组整体移动；右键打开操作菜单。',node:'Ctrl 点击曲线加点；Alt 点击节点减点；Alt 拖动手柄独立调整；Esc 返回选择。',add:'点击曲线增加节点，保持曲线原有形状。',pen:'逐点点击绘制；点击起点闭合；Enter 结束开放路径。',knife:'只切割拖动起点到终点之间的线段；须贯穿区域，不向两端延伸。优先切割已选对象。',scissors:'点击曲线剪断单条路径；分割色块请用「切割」。',fill:'点击现有闭合对象，应用当前填充颜色。',rect:'拖动绘制矩形。Shift 限制为正方形。',ellipse:'拖动绘制椭圆。Shift 限制为圆。',pan:'拖动画布平移；滚轮以鼠标位置为中心缩放。'};
 const selected=()=>doc.shapes.filter(s=>selection.has(s.id)&&s.visible&&!s.locked);
@@ -50,7 +53,7 @@ function render(){
   $('outline-btn').setAttribute('aria-pressed',outline);$('reference-btn').setAttribute('aria-pressed',showReference);
   $('reference').setAttribute('opacity',showReference?(doc.shapes.length?.28:1):0);
   $('rail-color').style.background=fillColor;
-  renderOverlay();renderLayers();renderProperties();tracePreview.render();renderCommandState();precision?.render();
+  renderOverlay();renderLayers();renderProperties();tracePreview.render();renderCommandState();precision?.render();contourPanel?.render();
 }
 function renderOverlay(){
   const group=$('overlays');group.replaceChildren();const z=scale();
@@ -63,9 +66,11 @@ function renderOverlay(){
         if(active||r.nodes.length<100)for(const side of ['in','out']){
           const h=G.add(n,n[side]);if(G.dist(n,h)<1e-5)continue;
           group.append(svg('line',{x1:n.x,y1:n.y,x2:h.x,y2:h.y,class:'handle-line','stroke-width':1/z}));
-          group.append(svg('circle',{cx:h.x,cy:h.y,r:3/z,class:'handle','stroke-width':1/z,'data-handle':`${key}|${side}`}));
+          group.append(svg('circle',{cx:h.x,cy:h.y,r:10/z,fill:'transparent','pointer-events':'all','data-handle-hit':`${key}|${side}`}));
+          group.append(svg('circle',{cx:h.x,cy:h.y,r:4.5/z,class:'handle','stroke-width':1/z,'data-handle':`${key}|${side}`}));
         }
-        group.append(svg('rect',{x:n.x-3.3/z,y:n.y-3.3/z,width:6.6/z,height:6.6/z,rx:.7/z,'stroke-width':1/z,class:`anchor ${active?'selected':''}`,'data-node':key}));
+        group.append(svg('rect',{x:n.x-11/z,y:n.y-11/z,width:22/z,height:22/z,fill:'transparent','pointer-events':'all','data-anchor-hit':key}));
+        group.append(svg('rect',{x:n.x-5/z,y:n.y-5/z,width:10/z,height:10/z,rx:1/z,'stroke-width':1/z,class:`anchor ${active?'selected':''}`,'data-node':key}));
       }));
     }else if(tool==='select'){
       const b=G.bounds(s);group.append(svg('rect',{x:b.x-4/z,y:b.y-4/z,width:b.width+8/z,height:b.height+8/z,fill:'none',stroke:'#58a295','stroke-width':1/z,'stroke-dasharray':`${4/z} ${3/z}`,'pointer-events':'none'}));
@@ -101,16 +106,18 @@ function syncReference(){const image=$('reference'),preview=$('image-preview');p
 canvas.addEventListener('pointerdown',event=>attempt(()=>{
   interacted=true;if(worker||event.button===2)return;canvas.focus();canvas.setPointerCapture(event.pointerId);
   const p=point(event),id=event.target.closest('[data-id]')?.getAttribute('data-id');
+  const hitPoint=tool==='node'?pickEditorPoint(doc.shapes,selection,nodeSelection,p,scale()):{};
+  const hkey=hitPoint.node?null:hitPoint.handle||event.target.getAttribute('data-handle'),nkey=hitPoint.handle?null:hitPoint.node||event.target.getAttribute('data-node');
   if(space||event.button===1||tool==='pan'){drag={type:'pan',client:{x:event.clientX,y:event.clientY},view:{...view}};event.preventDefault();return;}
   tracePreview.hide();
-  if(['select','node','add'].includes(tool)&&!event.target.hasAttribute('data-handle')){
-    if(event.altKey){const key=event.target.getAttribute('data-node')||nearestAnchor(p,id);if(key){const [sid]=key.split('|');enterNodes(sid);nodeSelection=new Set([key]);deleteSelection();}return;}
+  if(!id&&!hkey&&!nkey&&['select','node'].includes(tool)&&!event.ctrlKey&&!event.metaKey&&!event.altKey){const hole=holeAt(doc.shapes,p);if(hole){selectRingNodes(hole.id,hole.ringIndex);return;}}
+  if(['select','node','add'].includes(tool)&&!hkey){
+    if(event.altKey){const key=nkey||nearestAnchor(p,id);if(key){const [sid]=key.split('|');enterNodes(sid);nodeSelection=new Set([key]);deleteSelection();}return;}
     if(event.ctrlKey||event.metaKey){const hit=findCurve(p,id);if(hit)addNodeAt(hit);return;}
   }
   if(['rect','ellipse','knife'].includes(tool)){drag={type:tool,start:p,current:p};return;}
   if(tool==='pen'){penPoint(precision.snapPen(p,event));precision.clearSnap();return;}
   if(tool==='fill'){if(id){const s=byId(id);if(!s.rings.every(r=>r.closed)){toast('开放路径请先闭合后填色。');return;}s.fill=fillColor;selection=new Set([id]);commit('已填色');}return;}
-  const hkey=event.target.getAttribute('data-handle'),nkey=event.target.getAttribute('data-node');
   if(hkey&&tool==='node'){const [sid,ri,ni,side]=hkey.split('|');const n=byId(sid).rings[+ri].nodes[+ni];nodeSelection=new Set([keyFor(sid,+ri,+ni)]);drag={type:'handle',sid,ri:+ri,ni:+ni,side,otherLength:Math.hypot(n[side==='in'?'out':'in'].x,n[side==='in'?'out':'in'].y),start:p};renderOverlay();return;}
   if(nkey&&tool==='node'){
     if(event.shiftKey){if(nodeSelection.has(nkey)){nodeSelection.delete(nkey);renderOverlay();return;}else nodeSelection.add(nkey);}else if(!nodeSelection.has(nkey))nodeSelection=new Set([nkey]);
@@ -187,7 +194,7 @@ function addNodeAt(hit){
   const ni=G.insertNode(ring,hit.index,hit.t);if(ni===null)return;selection=new Set([hit.shape.id]);nodeSelection=new Set([keyFor(hit.shape.id,hit.ringIndex,ni)]);commit('已增加节点，曲线形状保持不变');setTool('node');
 }
 function nearestAnchor(p,id){
-  let best=null,distance=9/scale();const pool=id?[byId(id)]:selected();
+  let best=null,distance=12/scale();const pool=id?[byId(id)]:selected();
   for(const s of pool){if(!s||s.locked||!s.visible)continue;s.rings.forEach((r,ri)=>r.nodes.forEach((n,ni)=>{const d=G.dist(n,p);if(d<distance){distance=d;best=keyFor(s.id,ri,ni);}}));}return best;
 }
 canvas.addEventListener('wheel',e=>{e.preventDefault();zoom(Math.exp(Math.max(-1,Math.min(1,e.deltaY*.0015))),point(e));},{passive:false});
@@ -220,7 +227,20 @@ function performBoolean(op){
   let result=G.flattenShape(list[0]);for(const s of list.slice(1))result=G.booleanRings(result,G.flattenShape(s),op);
   const out=shapeResults(result,list[0],{union:'合并结果',subtract:'相减结果',intersect:'交集结果'}[op]);Groups.replaceShapes(doc,list.map(s=>s.id),out);selection=new Set(out.map(s=>s.id));commit('几何运算完成（0.35 px 曲线近似）');
 }
+function selectRingNodes(id,ri){
+  const shape=byId(id);if(worker||exporting||!shape||shape.locked||!shape.visible||!shape.rings[ri])return;
+  enterNodes(id);nodeSelection=new Set(shape.rings[ri].nodes.map((_,ni)=>keyFor(id,ri,ni)));render();
+  toast('已选中整条轮廓；Delete 删除该轮廓，镂空会填实。Ctrl Z 可撤销。');
+}
 function deleteSelection(){
+  if(tool==='node'&&nodeSelection.size){
+    const plans=[];
+    for(const shape of selected()){
+      const whole=shape.rings.map((ring,ri)=>({ring,ri})).filter(({ring,ri})=>ring.nodes.length&&ring.nodes.every((_,ni)=>nodeSelection.has(keyFor(shape.id,ri,ni)))).map(r=>r.ri);
+      if(whole.length){const copy=G.clone(shape);removeContours(copy,whole);plans.push([shape,copy.rings]);}
+    }
+    if(plans.length){for(const [shape,rings]of plans)shape.rings=rings;doc.shapes=doc.shapes.filter(shape=>shape.rings.length);nodeSelection.clear();commit('已删除整条轮廓；删除内轮廓会填实镂空，其他对象保持不变');return;}
+  }
   if(tool==='node'&&nodeSelection.size){let removed=0;const groups=new Map();for(const key of nodeSelection){const[id,ri,ni]=key.split('|'),gkey=`${id}|${ri}`;if(!groups.has(gkey))groups.set(gkey,[]);groups.get(gkey).push(+ni);}
     for(const [key,indices]of groups){const[id,ri]=key.split('|'),r=byId(id)?.rings[+ri];if(!r)continue;for(const ni of indices.sort((a,b)=>b-a))if(r.nodes.length>(r.closed?3:2)){r.nodes.splice(ni,1);removed++;}}
     if(!removed){toast('闭合轮廓至少保留 3 个节点；删除整个对象请切换选择工具。');return;}nodeSelection.clear();commit(`已删除 ${removed} 个节点`);return;}
@@ -303,8 +323,9 @@ async function loadDraft(){try{const db=await draftDB(),tx=db.transaction('draft
 function showContext(event,layerIds=null){
   event.preventDefault();if(worker||exporting)return;
   const p=point(event),nodeKey=event.target.getAttribute('data-node');
-  const id=event.target.closest('[data-id]')?.getAttribute('data-id')||nodeKey?.split('|')[0];
-  let ids=layerIds||(id?[...Groups.expandSelection(doc,[id])]:[]);
+  let id=event.target.closest('[data-id]')?.getAttribute('data-id')||nodeKey?.split('|')[0];
+  const hole=!id&&!layerIds?holeAt(doc.shapes,p):null;if(hole){selectRingNodes(hole.id,hole.ringIndex);id=hole.id;}
+  let ids=layerIds||(hole?[hole.id]:id?[...Groups.expandSelection(doc,[id])]:[]);
   if(ids.length&&!ids.every(id=>selection.has(id)))selectIds(ids);
   if(nodeKey){enterNodes(nodeKey.split('|')[0]);nodeSelection=new Set([nodeKey]);renderOverlay();}
   const c=capabilities(doc,selection,nodeSelection.size),hit=!layerIds?findCurve(p,id):null;
@@ -335,6 +356,8 @@ $('file-input').onchange=e=>attemptAsync(()=>openFile(e.target.files[0]));
 on('save-btn',saveProject);on('projects-btn',()=>library.show());on('backup-btn',downloadProject);on('export-btn',openExport);on('export-svg',saveSVG);on('export-psd',savePSD);on('close-export',()=>$('export-dialog').close());$('psd-accept').onchange=updateExportState;on('group-btn',groupSelected);on('ungroup-btn',ungroupSelected);on('new-btn',newProject);on('undo-btn',()=>restore(history.undo()));on('redo-btn',()=>restore(history.redo()));
 on('fit-btn',fit);on('zoom-in',()=>zoom(1/1.2));on('zoom-out',()=>zoom(1.2));on('zoom-value',()=>zoom(scale()));
 on('outline-btn',()=>{outline=!outline;render();});on('reference-btn',()=>{showReference=!showReference;render();});
+on('bezier-shortcut',()=>{tab('trace');$('trace-curve-controls').scrollIntoView({block:'start'});$('trace-curve-type').focus();if(!doc.image)toast('先导入或粘贴图片，再选择二次 / 三次贝塞尔轮廓。');});
+on('public-btn',()=>publicLibrary.show());
 on('demo-btn',vectorDemo);on('raster-demo-btn',()=>attemptAsync(rasterDemo));on('trace-btn',()=>attemptAsync(runTrace));on('cancel-trace',()=>cancelTrace());
 on('delete-btn',deleteSelection);on('smooth-btn',()=>editNodes('smooth'));on('corner-btn',()=>editNodes('corner'));on('join-btn',joinPaths);on('close-btn',closePaths);on('simplify-btn',simplifySelected);on('split-objects',splitObjects);on('raise-btn',()=>reorder(1));on('lower-btn',()=>reorder(-1));
 on('rail-color-btn',()=>{tab('properties');$('fill-color').click();});
@@ -387,6 +410,10 @@ const library=createProjectLibrary({getDocument:()=>doc,isDirty:()=>dirty,before
 });
 precision=createPrecisionTools({getState:()=>({doc,selection,busy:!!worker||exporting,dragging:!!drag,drawing:drawingId}),getScale:scale,
   select:ids=>{tracePreview.hide();selection=ids;nodeSelection.clear();setTool('select');tab('properties');},commit,refresh:render,notice:toast,showProperties:()=>tab('properties')});
+contourPanel=createContourPanel({getState:()=>({doc,selection,nodeSelection,busy:!!worker||exporting}),selectRing:selectRingNodes,deleteSelection:()=>attempt(deleteSelection)});
+const publicLibrary=createPublicLibrary({getDocument:()=>doc,guard:checkDiscard,busy:()=>!!worker||exporting,notice:toast,
+  onOpen:next=>{cancelTrace(false);library.reset();doc=next;savedState=null;history.reset(doc);dirty=true;selection.clear();nodeSelection.clear();drawingId=null;referenceRevision++;syncReference();setTool('select');render();fit();scheduleDraft();}});
 modeFields();syncReference();setTool('select');render();fit();loadDraft();
+queueMicrotask(()=>publicLibrary.openLink());
 // Read-only diagnostics for browser tests / bug reports, not a remote API.
 Object.defineProperty(window,'vectorStudio',{value:Object.freeze({version:VERSION,snapshot:()=>G.clone(doc),selection:()=>[...selection],getTool:()=>tool,preview:()=>tracePreview.diagnostics(),dirty:()=>dirty,activeProject:()=>library.activeId(),precision:()=>precision.diagnostics()}),writable:false});

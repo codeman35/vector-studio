@@ -1,17 +1,15 @@
 {
   "name": "vector-studio",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": true,
   "description": "Local-first raster tracing and SVG path editor. No server-side processing.",
   "type": "module",
   "license": "MIT",
-  "engines": {
-    "node": ">=20"
-  },
+  "engines": {"node": ">=20"},
   "scripts": {
     "start": "node scripts/serve.mjs",
     "test": "node --test",
-    "check": "node --check src/app.js && node --check src/document.js && node --check src/editor-ui.js && node --check src/geometry.js && node --check src/groups.js && node --check src/precision-ui.js && node --check src/precision.js && node --check src/project-library.js && node --check src/project-store.js && node --check src/psd.js && node --check src/trace-curves.js && node --check src/trace-preview.js && node --check src/trace-worker.js && node --check src/trace.js",
+    "check": "node --check src/app.js && node --check src/contour-ui.js && node --check src/contours.js && node --check src/document.js && node --check src/editor-ui.js && node --check src/geometry.js && node --check src/groups.js && node --check src/precision-ui.js && node --check src/precision.js && node --check src/project-library.js && node --check src/project-store.js && node --check src/psd.js && node --check src/public-library.js && node --check src/public-projects.js && node --check src/trace-curves.js && node --check src/trace-preview.js && node --check src/trace-worker.js && node --check src/trace.js",
     "build": "node scripts/build.mjs"
   }
 }

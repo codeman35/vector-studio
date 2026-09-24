@@ -7,6 +7,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 ROOT=Path(__file__).resolve().parents[1]
 OUT=ROOT/'artifacts';OUT.mkdir(exist_ok=True)
+EXPECTED_VERSION=json.loads((ROOT/'package.json').read_text())['version']
 with sync_playwright() as p:
     browser=p.chromium.launch(executable_path=os.getenv('CHROMIUM_EXECUTABLE') or shutil.which('chromium'),headless=True,args=['--no-sandbox'])
     page=browser.new_page(viewport={'width':1600,'height':1100});errors=[]
@@ -20,8 +21,8 @@ with sync_playwright() as p:
             page.wait_for_timeout(100)
         raise AssertionError(expr+' '+str(errors))
     wait('window.vectorStudio !== undefined')
-    assert page.evaluate('vectorStudio.version')=='0.3.1'
-    assert page.locator('.version').inner_text().startswith('0.3.1')
+    assert page.evaluate('vectorStudio.version')==EXPECTED_VERSION
+    assert page.locator('.version').inner_text().startswith(EXPECTED_VERSION)
     assert page.locator('#trace-curve-type').is_disabled()
     def ready():wait('vectorStudio.preview().ready && !vectorStudio.preview().pending')
     def paths():return page.locator('#trace-preview path').evaluate_all('(ps)=>ps.map(p=>p.getAttribute("d"))')
@@ -38,7 +39,6 @@ with sync_playwright() as p:
     page.select_option('#trace-curve-type','cubic');ready();cub=paths();assert cub!=quad
     page.uncheck('#trace-preserve-corners');ready();rounded=paths();assert rounded!=cub
     value(15);ready();low=paths();value(95);ready();high=paths();assert low!=high
-    # Rapid changes invalidate stale messages, final request must win.
     for typ in ['cubic','polygon','quadratic']:page.select_option('#trace-curve-type',typ)
     ready();latest=paths();assert page.evaluate('vectorStudio.preview().curveType')=='quadratic'
     assert snapshot()==base

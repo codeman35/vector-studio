@@ -1,6 +1,4 @@
-/** Transient, latest-request-wins tracing. Preview never edits the document.
- * Uses the selected resolution for BOTH preview and Apply (no quality swap).
- */
+/** Latest-request-wins transient preview. Apply uses the same resolution. */
 import {pathData} from './geometry.js';
 import {VERSION} from './document.js';
 export function createTracePreview({getDocument,createWorker,onApplying,onApply,onError,refresh,referenceOpacity}) {
@@ -20,6 +18,7 @@ export function createTracePreview({getDocument,createWorker,onApplying,onApply,
   function render(){
     const blocked=!getDocument().image||applying,polygon=$('trace-curve-type').value==='polygon';
     $('trace-curve-type').disabled=blocked;
+    for(const button of document.querySelectorAll('[data-curve-choice]')){button.disabled=blocked;button.setAttribute('aria-pressed',button.dataset.curveChoice===$('trace-curve-type').value);}
     for(const id of ['trace-curve-smoothness','trace-preserve-corners'])$(id).disabled=blocked||polygon;
     $('trace-curve-value').textContent=$('trace-curve-smoothness').value+'%';
     const doc=getDocument(),active=!!doc.image&&enabled()&&visible&&!suspended;
@@ -72,9 +71,7 @@ export function createTracePreview({getDocument,createWorker,onApplying,onApply,
         try{
           const shapes=message.result.shapes,sx=doc.image.width/w,sy=doc.image.height/h;
           let nodes=0;
-          for(const s of shapes)for(const r of s.rings)for(const n of r.nodes){
-            nodes++;n.x*=sx;n.y*=sy;n.in.x*=sx;n.in.y*=sy;n.out.x*=sx;n.out.y*=sy;
-          }
+          for(const s of shapes)for(const r of s.rings)for(const n of r.nodes){nodes++;n.x*=sx;n.y*=sy;n.in.x*=sx;n.in.y*=sy;n.out.x*=sx;n.out.y*=sy;}
           if(shapes.length>1500||nodes>50000)throw new Error('预览超过编辑预算，请提高简化容差或降低尺寸。');
           result=shapes;resultDoc=doc;resultKey=settingsKey;
           const fragment=document.createDocumentFragment();
@@ -98,20 +95,13 @@ export function createTracePreview({getDocument,createWorker,onApplying,onApply,
   function cancel(){stop();suspended=true;setState('paused','预览已取消，项目未改动');render();refresh();}
   function reset(){stop();clearResult();imagePromise=null;imageSource='';schedule();}
   function hide(){stop();suspended=true;render();}
-  function setVisible(value){
-    visible=value;if(!value){stop();render();return;}
-    suspended=false;if(matches())render();else schedule();
-  }
+  function setVisible(value){visible=value;if(!value){stop();render();return;}suspended=false;if(matches())render();else schedule();}
   for(const id of ['threshold','tolerance','speckle','trace-curve-smoothness'])$(id).addEventListener('input',()=>schedule());
   for(const id of ['trace-mode','color-count','trace-size','remove-background','trace-curve-type','trace-preserve-corners'])$(id).addEventListener('change',()=>schedule());
-  $('live-preview').addEventListener('change',()=>schedule());
-  $('preview-display').addEventListener('change',render);
-  $('replace-trace').addEventListener('change',render);
-  $('cancel-preview').addEventListener('click',cancel);
+  $('live-preview').addEventListener('change',()=>schedule());$('preview-display').addEventListener('change',render);
+  $('replace-trace').addEventListener('change',render);$('cancel-preview').addEventListener('click',cancel);
   return {render,reset,hide,setVisible,apply,cancel,diagnostics:()=>({state,curveType:$('trace-curve-type').value,pending:!!worker||timer!==null,applying,visible:visible&&!suspended,ready:matches()})};
 }
-
-/** Construct real controls in both module and single-file builds. */
 function mountCurveControls(){
   if(document.getElementById('trace-curve-type'))return;
   const section=document.createElement('div');section.className='preview-controls';section.id='trace-curve-controls';
@@ -120,10 +110,12 @@ function mountCurveControls(){
   const select=document.createElement('select');select.id='trace-curve-type';
   for(const [value,text] of [['polygon','硬边折线'],['quadratic','二次贝塞尔（圆滑）'],['cubic','三次贝塞尔（圆滑）']]){const option=document.createElement('option');option.value=value;option.textContent=text;select.append(option);}
   label.append(select);section.append(label);
+  const choices=document.createElement('div');choices.className='curve-choices';
+  for(const [value,text]of [['polygon','硬边折线'],['quadratic','二次贝塞尔'],['cubic','三次贝塞尔']]){const button=document.createElement('button');button.type='button';button.textContent=text;button.dataset.curveChoice=value;button.onclick=()=>{if(button.disabled)return;select.value=value;select.dispatchEvent(new Event('change',{bubbles:true}));};choices.append(button);}section.append(choices);
   const smooth=document.createElement('label');smooth.className='field';smooth.textContent='圆滑程度 ';
   const output=document.createElement('output');output.id='trace-curve-value';output.textContent='60%';
   const range=document.createElement('input');Object.assign(range,{id:'trace-curve-smoothness',type:'range',min:'0',max:'100',step:'1',value:'60'});smooth.append(output,range);section.append(smooth);
   const corner=document.createElement('label');corner.className='check-row';const check=document.createElement('input');check.id='trace-preserve-corners';check.type='checkbox';check.checked=true;corner.append(check,document.createTextNode('保留尖角（字形、印章建议开启）'));section.append(corner);
   const hint=document.createElement('p');hint.className='hint';hint.textContent='选择后自动预览，确认生成才写入图层。0% 保持折线；纯直线或受保护尖角可能不变。二次曲线等价转换为三次节点编辑，当前 SVG 统一写 C。';section.append(hint);
-  document.getElementById('trace-mode').closest('label').after(section);
+  document.getElementById('image-preview').before(section);
 }

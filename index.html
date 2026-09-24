@@ -2,18 +2,21 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="theme-color" content="#246c61"><meta name="description" content="开源图片描摹与 SVG 节点编辑器。图片在本机浏览器处理，不上传。">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="theme-color" content="#246c61"><meta name="description" content="开源图片描摹与 SVG 节点编辑器。图片本机描摹；仅在用户主动公开发布时上传项目。">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>线境 · Vector Studio</title><link rel="stylesheet" href="./src/style.css">
 <link rel="stylesheet" href="./src/workspace.css">
+<link rel="stylesheet" href="./src/sharing.css">
+
+
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><svg width="31" height="31" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="#256e63"/><path d="M8 23C9 5 24 27 24 9M8 23L8 14M24 9L24 18" stroke="white" stroke-width="1.8" fill="none"/><rect x="5.5" y="20.5" width="5" height="5" rx="1" fill="white"/><rect x="21.5" y="6.5" width="5" height="5" rx="1" fill="white"/></svg><div><strong>线境</strong><span>VECTOR STUDIO</span></div><small class="version">0.2.1 预览版</small></div>
+  <div class="brand"><svg width="31" height="31" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="#256e63"/><path d="M8 23C9 5 24 27 24 9M8 23L8 14M24 9L24 18" stroke="white" stroke-width="1.8" fill="none"/><rect x="5.5" y="20.5" width="5" height="5" rx="1" fill="white"/><rect x="21.5" y="6.5" width="5" height="5" rx="1" fill="white"/></svg><div><strong>线境</strong><span>VECTOR STUDIO</span></div><small class="version">0.4.0 预览版</small></div>
   <div class="project-title"><input id="document-name" value="未命名图案" aria-label="项目名称" maxlength="80"><span id="save-state">尚未修改</span></div>
-  <div class="header-actions"><button id="projects-btn">项目库</button><button id="open-btn" title="导入 PNG / JPG / WebP，或打开 .vstudio 项目">打开</button><button id="backup-btn" title="下载 .vstudio，跨设备备份">下载项目</button><button id="save-btn" title="Ctrl + S">保存项目</button><button id="export-btn" class="primary">导出文件 <span>↗</span></button><button id="help-btn" class="icon-only" aria-label="使用帮助">?</button></div>
+  <div class="header-actions"><button id="projects-btn">本地项目</button><button id="public-btn">公开项目</button><button id="open-btn" title="导入 PNG / JPG / WebP，或打开 .vstudio 项目">打开</button><button id="backup-btn" title="下载 .vstudio，跨设备备份">下载项目</button><button id="save-btn" title="Ctrl + S">保存本地</button><button id="export-btn" class="primary">导出文件 <span>↗</span></button><button id="help-btn" class="icon-only" aria-label="使用帮助">?</button></div>
 </header>
-<div class="subbar"><div class="history-buttons"><button id="undo-btn" title="撤销 Ctrl+Z" aria-label="撤销">↶</button><button id="redo-btn" title="重做 Ctrl+Shift+Z" aria-label="重做">↷</button><span class="separator"></span><button id="new-btn">新建</button></div><span class="privacy"><i></i> 本机处理 · 图片不上传</span><div class="sub-right"><button id="recover-btn" hidden>恢复上次草稿</button><button id="demo-btn">打开编辑示例</button><span class="muted">SVG / RGB / px</span></div></div>
+<div class="subbar"><div class="history-buttons"><button id="undo-btn" title="撤销 Ctrl+Z" aria-label="撤销">↶</button><button id="redo-btn" title="重做 Ctrl+Shift+Z" aria-label="重做">↷</button><span class="separator"></span><button id="new-btn">新建</button><button id="bezier-shortcut" class="accent-entry">贝塞尔轮廓</button></div><span class="privacy"><i></i> 本机描摹 · 公开发布需确认</span><div class="sub-right"><button id="recover-btn" hidden>恢复上次草稿</button><button id="demo-btn">打开编辑示例</button><span class="muted">SVG / RGB / px</span></div></div>
 <main class="app-layout">
   <nav class="toolrail" aria-label="编辑工具">
     <button data-tool="select" class="active" title="选择和移动 V"><svg viewBox="0 0 24 24"><path d="M5 3l14 10-7 1-3 7z"/></svg><span>选择</span><kbd>V</kbd></button>
@@ -79,14 +82,14 @@
       <p class="hint">相减 = 底层对象减去上层对象。当前几何运算会按 0.35 px 容差将曲线转换为折线。镂空跟随所属区域保留。</p>
       <div class="button-grid"><button id="raise-btn">上移一层</button><button id="lower-btn">下移一层</button></div>
     </div>
-    <div class="panel" id="panel-layers" hidden><div class="section-title"><h2>对象图层</h2><span id="layer-count" class="mini-badge">0</span></div><p class="panel-description">上方对象位于前景。Shift 点击多选；双击名称重命名。</p><div class="button-grid group-actions"><button id="group-btn">群组 Ctrl G</button><button id="ungroup-btn">解组 Ctrl Shift G</button></div><div id="layer-list" role="tree" aria-label="对象与群组"></div><p class="hint">缩略图保留形状与孔洞。群组整体选择和移动，双击画布图形可编辑单个对象的节点。</p></div>
+    <div class="panel" id="panel-layers" hidden><div class="section-title"><h2>对象图层</h2><span id="layer-count" class="mini-badge">0</span></div><p class="panel-description">上方对象位于前景。Shift 点击多选；双击名称重命名名。</p><div class="button-grid group-actions"><button id="group-btn">群组 Ctrl G</button><button id="ungroup-btn">解组 Ctrl Shift G</button></div><div id="layer-list" role="tree" aria-label="对象与群组"></div><p class="hint">缩略图保留形状与孔洞。群组整体选择和移动，双击画布图形可编辑单个对象的节点。</p></div>
     <div class="inspector-bottom"><span id="tool-hint">选择：拖动移动，Shift 多选，空白处框选。</span></div>
   </aside>
 </main>
 <footer class="statusbar"><span id="status-message">就绪 · 拖入图片，或按 Ctrl + V 粘贴</span><div><span id="object-stats">0 个对象 · 0 个节点</span><span class="status-dot"></span><span>开源 / 无后台</span></div></footer>
 <div id="toast" role="status" aria-live="polite" hidden></div>
 <input type="file" id="file-input" accept="image/png,image/jpeg,image/webp,image/bmp,.vstudio,.json" hidden>
-<dialog id="help-dialog"><div class="dialog-head"><h2>线境 · 使用说明</h2><button id="close-help" aria-label="关闭帮助">×</button></div><p>这是可迭代的功能预览版，不是生产级印前软件。所有图像与几何计算在浏览器本机执行。</p><h3>从图片开始</h3><p>粘贴 / 拖入图片 → 拖动参数实时预览 → 确认生成轮廓 → 用节点工具修形 → 切割合并 → 填色 → 导出文件。</p><h3>关键操作</h3><div class="shortcut-grid"><span>选择 / 节点</span><kbd>V / N</kbd><span>进入节点编辑</span><kbd>双击图形</kbd><span>增加 / 删除节点</span><kbd>Ctrl 点击曲线 / Alt 点击节点</kbd><span>群组 / 解组</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>复制副本</span><kbd>Ctrl D</kbd><span>直线切割 / 剪断路径</span><kbd>K / C</kbd><span>钢笔结束 / 闭合</span><kbd>Enter / 点击起点</kbd><span>独立调整手柄</span><kbd>Alt + 拖动手柄</kbd><span>框选或多选</span><kbd>拖动空白 / Shift</kbd><span>撤销 / 重做</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>连接端点 / 合并</span><kbd>J / U</kbd><span>平移 / 缩放</span><kbd>空格拖动 / 滚轮</kbd><span>保存项目 / 全选</span><kbd>Ctrl S / Ctrl A</kbd></div><p>切割只作用于按下到松开之间的有限线段，不延伸到画板两端。必须贯穿闭合区域才会拆成独立色块；只划到内部不会自动补齐。剪断单条轮廓请用剪断工具。</p><h3>保存与限制</h3><p>用 .vstudio 保存可继续编辑的项目；SVG 导出保留路径、颜色和孔洞，不含参考图片。Ctrl S 保存到本地项目库；下载 .vstudio 可以备份和跨设备迁移。清除浏览器站点数据会清空项目库。切换未保存项目会提醒保存、放弃或取消。</p><p>当前是像素轮廓预览算法，不是 VTracer。几何运算先以 0.35 px 近似展开曲线，复杂稿件应检查。任意线围成区域的自动填色、原生 AI / CDR、CMYK / 专色、通用 SVG 导入尚未实现。</p><p>首次通过 GitHub Pages 加载后，此标签页不依赖外部服务。尚未提供离线重启缓存。</p><button class="primary full" id="help-done">开始编辑</button></dialog>
+<dialog id="help-dialog"><div class="dialog-head"><h2>线境 · 使用说明</h2><button id="close-help" aria-label="关闭帮助">×</button></div><p>这是可迭代的功能预览版，不是生产级印前软件。所有图像与几何计算在浏览器本机执行。</p><h3>从图片开始</h3><p>粘贴 / 拖入图片 → 拖动参数实时预览 → 确认生成轮廓 → 用节点工具修形 → 切割合并 → 填色 → 导出文件。</p><h3>关键操作</h3><div class="shortcut-grid"><span>选择 / 节点</span><kbd>V / N</kbd><span>进入节点编辑</span><kbd>双击图形</kbd><span>增加 / 删除节点</span><kbd>Ctrl 点击曲线 / Alt 点击节点</kbd><span>群组 / 解组</span><kbd>Ctrl G / Ctrl Shift G</kbd><span>复制副本</span><kbd>Ctrl D</kbd><span>直线切割 / 剪断路径</span><kbd>K / C</kbd><span>钢笔结束 / 闭合</span><kbd>Enter / 点击起点</kbd><span>独立调整手柄</span><kbd>Alt + 拖动手柄</kbd><span>框选或多选</span><kbd>拖动空白 / Shift</kbd><span>撤销 / 重做</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>连接端点 / 合并</span><kbd>J / U</kbd><span>平移 / 缩放</span><kbd>空格拖动 / 滚轮</kbd><span>保存项目 / 全选</span><kbd>Ctrl S / Ctrl A</kbd></div><p>切割只作用于按下到松开之间的有限线段，不延伸到画板两端。必须贯穿闭合区域才会拆成独立色块；只划到内部不会自动补齐。剪断单条轮廓请用剪断工具。</p><h3>保存与限制</h3><p>用 .vstudio 保存可继续编辑的项目；SVG 导出保留路径、颜色和孔洞，不含参考图片。Ctrl S 保存到本地项目库；下载 .vstudio 可以备份和跨设备迁移。清除浏览器站点数据会清空项目库。切换未保存项目会提醒保存、放弃或取消。</p><p>公开项目需要明确确认并在 GitHub 提交，Pages 发布成功后才跨浏览器可见；本地保存不会自动上传。</p><p>当前是像素轮廓预览算法，不是 VTracer。几何运算先以 0.35 px 近似展开曲线，复杂稿件应检查。任意线围成区域的自动填色、原生 AI / CDR、CMYK / 专色、通用 SVG 导入尚未实现。</p><p>描摹在本机运行；读取公开库需要网络。尚未提供离线重启缓存。</p><button class="primary full" id="help-done">开始编辑</button></dialog>
 
 <dialog id="projects-dialog" class="projects-dialog">
   <div class="dialog-head"><div><h2>本地项目库</h2><span id="projects-count">0 个本地项目</span></div><button id="close-projects" aria-label="关闭项目库">×</button></div>
