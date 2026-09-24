@@ -29,6 +29,7 @@ try:
   else:page.goto(f'http://127.0.0.1:{server.server_port}/')
   page.wait_for_function('(v)=>window.vectorStudio?.version===v',arg=VERSION)
   def snap():return page.evaluate('vectorStudio.snapshot()')
+  def selected_keys():return sorted(page.locator('#overlays .anchor.selected').evaluate_all('(nodes)=>nodes.map(n=>n.getAttribute("data-node"))'))
   def xy(x,y):return page.evaluate('([x,y])=>{const e=document.getElementById("editor"),p=e.createSVGPoint();p.x=x;p.y=y;const s=p.matrixTransform(e.getScreenCTM());return [s.x,s.y]}',[x,y])
   seq=[0]
   def load(curved=False):
@@ -57,14 +58,37 @@ try:
   page.mouse.move(*xy(170,140));page.wait_for_function('!document.getElementById("editor").dataset.curveDrag')
   page.mouse.move(*xy(240,100));page.wait_for_function('document.getElementById("editor").dataset.curveDrag==="ready"')
   page.mouse.click(*xy(240,100));assert snap()==base and not page.evaluate('vectorStudio.dirty()') and page.locator('#undo-btn').is_disabled()
+  assert selected_keys()==[], 'A segment click must not select its endpoint nodes'
   # Straight -> cubic, no anchor movement, one-step undo and exact redo.
   down(240,100);move(260,65);assert page.locator('#curve-drag-feedback path').count()==1
   current=snap();check_only_handles(base,current);assert current!=base
+  assert selected_keys()==[], 'Segment drag must not create a node selection, even while dragging'
   page.screenshot(path=str(OUT/'direct-curve-drag.png'));page.mouse.up();bent=snap();assert page.evaluate('vectorStudio.dirty()')
+  assert selected_keys()==[], 'Pointer-up must preserve the original empty node selection'
   r=bent['shapes'][0]['rings'][0]['nodes'];mid={k:.5*(r[0][k]+r[1][k])+.375*(r[0]['out'][k]+r[1]['in'][k]) for k in ['x','y']}
   assert abs(mid['x']-260)<.01 and abs(mid['y']-65)<.01,mid
   page.click('#undo-btn');assert snap()==base and page.locator('#undo-btn').is_disabled()
   page.click('#redo-btn');assert snap()==bent
+  # Preserve intentionally selected endpoints and unrelated nodes; do not
+  # replace with the segment's two endpoints or unconditionally clear them.
+  for chosen in [[], [(120,100)], [(360,100)], [(120,320)], [(120,320),(360,320)], [(120,100),(360,100)]]:
+   base=load()
+   for index,anchor in enumerate(chosen):
+    if index:page.keyboard.down('Shift')
+    page.mouse.click(*xy(*anchor))
+    if index:page.keyboard.up('Shift')
+   before_keys=selected_keys();assert len(before_keys)==len(chosen)
+   down(240,100);move(240,65)
+   assert selected_keys()==before_keys, 'Drag preview changed node selection'
+   page.mouse.up();assert selected_keys()==before_keys, 'Curve release changed node selection'
+   check_only_handles(base,snap());assert snap()!=base
+  # Clicking one endpoint afterwards must not move the other endpoint too.
+  base=load();down(240,100);move(240,65);page.mouse.up();before=snap()
+  assert selected_keys()==[]
+  down(120,100);move(105,115);page.mouse.up();after=snap()
+  assert selected_keys()==['body|0|0']
+  assert after['shapes'][0]['rings'][0]['nodes'][1]==before['shapes'][0]['rings'][0]['nodes'][1]
+  assert after['shapes'][0]['rings'][0]['nodes'][0]['x']!=before['shapes'][0]['rings'][0]['nodes'][0]['x']
   # Both directions work: pull outside, cross the original edge, push inside.
   base=load();down(240,100);move(240,65)
   assert page.locator('#editor').get_attribute('data-curve-drag')=='dragging'
@@ -82,6 +106,18 @@ try:
    elif cancel=='blur':page.evaluate('window.dispatchEvent(new Event("blur"))')
    else:page.evaluate('(t)=>document.getElementById("editor").dispatchEvent(new PointerEvent(t,{pointerId:1,bubbles:true}))',cancel)
    page.mouse.up();assert snap()==base and not page.evaluate('vectorStudio.dirty()'),cancel
+  # No-op and every cancellation restore intentional multi-node selection.
+  for cancel in ['return','click','Escape','pointercancel','lostpointercapture','blur']:
+   base=load();page.mouse.click(*xy(120,320));page.keyboard.down('Shift');page.mouse.click(*xy(360,320));page.keyboard.up('Shift')
+   before_keys=selected_keys();assert len(before_keys)==2
+   down(240,100)
+   if cancel!='click':move(240,65)
+   if cancel=='return':move(240,100)
+   elif cancel=='Escape':page.keyboard.press('Escape')
+   elif cancel=='blur':page.evaluate('window.dispatchEvent(new Event("blur"))')
+   elif cancel not in ['return','click']:page.evaluate('(t)=>document.getElementById("editor").dispatchEvent(new PointerEvent(t,{pointerId:1,bubbles:true}))',cancel)
+   page.mouse.up();assert selected_keys()==before_keys,cancel
+   assert snap()==base and not page.evaluate('vectorStudio.dirty()'),cancel
   # Filled interior still marquees, and Shift can start a marquee directly on an edge.
   base=load();down(170,140);move(100,80);assert page.locator('#gesture rect').count()==1;page.mouse.up();assert snap()==base;assert page.locator('#overlays .anchor.selected').count()==1
   page.keyboard.down('Shift');down(240,98);move(370,110);page.mouse.up();page.keyboard.up('Shift');assert snap()==base;assert page.locator('#overlays .anchor.selected').count()>=2
@@ -120,6 +156,6 @@ try:
   # Double click blank still exits. Ordinary select mode still moves entire objects.
   page.mouse.dblclick(*xy(45,410));assert page.evaluate('vectorStudio.getTool()')=='select';before=snap();down(145,220);move(155,235);page.mouse.up();assert snap()!=before
   assert not errors,errors
-  print('PASS: direct line/cubic/hole/open/closing-edge drag; fixed anchors and neighboring segments; arc cursor and inward/outward dragging; hover; click/no-op; cancel; inside/Shift marquee; node/handle priority; Ctrl/Alt; undo/redo; project/SVG; no page errors.')
+  print('PASS: direct line/cubic/hole/open/closing-edge drag; fixed anchors and neighboring segments; no automatic endpoint selection; prior single/multi-node selection and cancel preserved; next endpoint drag independent; arc cursor and inward/outward dragging; hover; click/no-op; cancel; inside/Shift marquee; node/handle priority; Ctrl/Alt; undo/redo; project/SVG; no page errors.')
   browser.close()
 finally:server.shutdown();server.server_close()

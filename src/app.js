@@ -67,7 +67,8 @@ function renderOverlay(){
     if(['node','add','scissors'].includes(tool)){
       s.rings.forEach((r,ri)=>r.nodes.forEach((n,ni)=>{
         if(++drawn>2500)return;const key=keyFor(s.id,ri,ni),active=nodeSelection.has(key);
-        if(active||r.nodes.length<100)for(const side of ['in','out']){
+        const bending=drag?.type==='curve'&&drag.sid===s.id&&drag.ri===ri&&(ni===drag.index||ni===drag.nextIndex);
+        if(active||bending||r.nodes.length<100)for(const side of ['in','out']){
           const h=G.add(n,n[side]);if(G.dist(n,h)<1e-5)continue;
           group.append(svg('line',{x1:n.x,y1:n.y,x2:h.x,y2:h.y,class:'handle-line','stroke-width':1/z}));
           group.append(svg('circle',{cx:h.x,cy:h.y,r:10/z,fill:'transparent','pointer-events':'all','data-handle-hit':`${key}|${side}`}));
@@ -184,7 +185,8 @@ canvas.addEventListener('pointerdown',event=>attempt(()=>{
       const basis=beginCurveDrag(r.nodes[hit.index],r.nodes[nextIndex],hit.t);
       drag={type:'curve',sid:hit.id,ri:hit.ringIndex,index:hit.index,nextIndex,basis,start:p,current:p,
         startScale:scale(),pointerId:event.pointerId,moved:false,beforeNodes:new Set(nodeSelection)};
-      nodeSelection=new Set([keyFor(hit.id,hit.ringIndex,hit.index),keyFor(hit.id,hit.ringIndex,nextIndex)]);
+      // Bending a segment is not a node-selection gesture. Keep the user's
+      // existing selection, including an empty selection, throughout the drag.
       event.preventDefault();render();return;
     }
   }
@@ -246,6 +248,7 @@ canvas.addEventListener('pointerup',event=>attempt(()=>{
   if(drag.type==='curve'){
     if(event.pointerId!==drag.pointerId)return;updateCurveDrag(point(event));
     if(!drag)return;const d=drag;drag=null;clearCurveHover();
+    nodeSelection=new Set(d.beforeNodes);
     const r=byId(d.sid)?.rings[d.ri],a=r?.nodes[d.index],b=r?.nodes[d.nextIndex];
     const changed=d.moved&&a&&b&&(a.out.x!==d.basis.oldOut.x||a.out.y!==d.basis.oldOut.y||b.in.x!==d.basis.oldIn.x||b.in.y!==d.basis.oldIn.y);
     if(changed)commit('已弯曲线段：两个端点保持不动，Ctrl Z 可撤销');else render();return;

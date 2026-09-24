@@ -1,10 +1,16 @@
 # 线境 · Vector Studio
 
-纯前端、MIT 开源、浏览器本机处理的图片描摹与矢量路径编辑器。当前 **v0.5.1 预览版**。
+纯前端、MIT 开源、浏览器本机处理的图片描摹与矢量路径编辑器。当前 **v0.5.2 预览版**。
 
 在线：https://codeman35.github.io/vector-studio/
 
 发布以对应 Actions 的 build/deploy 成功和页面版本为准。更新前保存并下载项目备份；不要清除站点数据来刷新，否则本地项目可能丢失。
+
+## 0.5.2：拖动线条不再自动选中端点
+
+线段拖动与节点选择分开：悬停、点击、拖动及松开线段，都不会顺便选中两个端点。原来没有选中节点，结束后仍不选中；原来手动选择了节点，就保留原来的选择，不强制清空或替换。临时显示控制手柄不代表节点被选中。
+
+拖完曲线再单独点击一个节点拖动，不会因为程序自动双选而把另一端一起带走。向内/向外拉弯、固定端点、框选、取消和一次撤销均保持。
 
 ## 0.5.1：弧线光标与固定端点拖动
 
@@ -75,4 +81,4 @@ python scripts/verify-psd.py
 
 Playwright/Chromium、psd-tools 仅为测试工具。根 index 为模块开发入口；dist/index.html 是固定模块图打包的单文件，包含 Worker 及重新计算的 CSP 哈希。长期修改 src，不直接改 dist。注入式浏览器测试不冒充同源 IndexedDB/网络验证。CI 保留持久化、分享、精确编辑、框选、曲线及 PSD 测试，通过后自动发布 main；PR 不部署。
 
-变更见 CHANGELOG.md，测试记录见 docs/TEST-REPORT-0.5.1.md 和 docs/TEST-REPORT-0.5.0.md。开发约定见 AGENTS.md。不提交私人图像、项目、密码或 Token。MIT 授权只覆盖软件，不赋予使用者第三方素材权利。
+变更见 CHANGELOG.md，测试记录见 docs/TEST-REPORT-0.5.2.md、docs/TEST-REPORT-0.5.1.md 和 docs/TEST-REPORT-0.5.0.md。开发约定见 AGENTS.md。不提交私人图像、项目、密码或 Token。MIT 授权只覆盖软件，不赋予使用者第三方素材权利。
