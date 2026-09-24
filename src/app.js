@@ -16,7 +16,7 @@ let tool='select',outline=false,showReference=true,fillColor='#247a70',dirty=fal
 let view={x:-100,y:-100,width:1200,height:900},drag=null,space=false,worker=null,referenceRevision=0,saveTimer=null,toastTimer=null;
 let precision=null,contourPanel=null;
 let savedDraft=null,interacted=false,savedState=JSON.stringify(doc),exporting=false;
-const hints={select:'双击图形进入节点编辑；Shift 多选；群组整体移动；右键打开操作菜单。',node:'Ctrl 点击曲线加点；Alt 点击节点减点；Alt 拖动手柄独立调整；Esc 返回选择。',add:'点击曲线增加节点，保持曲线原有形状。',pen:'逐点点击绘制；点击起点闭合；Enter 结束开放路径。',knife:'只切割拖动起点到终点之间的线段；须贯穿区域，不向两端延伸。优先切割已选对象。',scissors:'点击曲线剪断单条路径；分割色块请用「切割」。',fill:'点击现有闭合对象，应用当前填充颜色。',rect:'拖动绘制矩形。Shift 限制为正方形。',ellipse:'拖动绘制椭圆。Shift 限制为圆。',pan:'拖动画布平移；滚轮以鼠标位置为中心缩放。'};
+const hints={select:'双击图形进入节点编辑；Shift 多选；群组整体移动；右键打开操作菜单。',node:'图形内外拖动均可框选节点；Shift 追加；Ctrl 点击曲线加点；Alt 点击节点减点；Esc 返回选择。',add:'点击曲线增加节点，保持曲线原有形状。',pen:'逐点点击绘制；点击起点闭合；Enter 结束开放路径。',knife:'只切割拖动起点到终点之间的线段；须贯穿区域，不向两端延伸。优先切割已选对象。',scissors:'点击曲线剪断单条路径；分割色块请用「切割」。',fill:'点击现有闭合对象，应用当前填充颜色。',rect:'拖动绘制矩形。Shift 限制为正方形。',ellipse:'拖动绘制椭圆。Shift 限制为圆。',pan:'拖动画布平移；滚轮以鼠标位置为中心缩放。'};
 const selected=()=>doc.shapes.filter(s=>selection.has(s.id)&&s.visible&&!s.locked);
 const byId=id=>doc.shapes.find(s=>s.id===id);
 const scale=()=>canvas.getScreenCTM()?.a||1;
@@ -110,7 +110,7 @@ canvas.addEventListener('pointerdown',event=>attempt(()=>{
   const hkey=hitPoint.node?null:hitPoint.handle||event.target.getAttribute('data-handle'),nkey=hitPoint.handle?null:hitPoint.node||event.target.getAttribute('data-node');
   if(space||event.button===1||tool==='pan'){drag={type:'pan',client:{x:event.clientX,y:event.clientY},view:{...view}};event.preventDefault();return;}
   tracePreview.hide();
-  if(!id&&!hkey&&!nkey&&['select','node'].includes(tool)&&!event.ctrlKey&&!event.metaKey&&!event.altKey){const hole=holeAt(doc.shapes,p);if(hole){selectRingNodes(hole.id,hole.ringIndex);return;}}
+  if(!id&&!hkey&&!nkey&&tool==='select'&&!event.ctrlKey&&!event.metaKey&&!event.altKey){const hole=holeAt(doc.shapes,p);if(hole){selectRingNodes(hole.id,hole.ringIndex);return;}}
   if(['select','node','add'].includes(tool)&&!hkey){
     if(event.altKey){const key=nkey||nearestAnchor(p,id);if(key){const [sid]=key.split('|');enterNodes(sid);nodeSelection=new Set([key]);deleteSelection();}return;}
     if(event.ctrlKey||event.metaKey){const hit=findCurve(p,id);if(hit)addNodeAt(hit);return;}
@@ -127,6 +127,14 @@ canvas.addEventListener('pointerdown',event=>attempt(()=>{
     const hit=findCurve(p,id);if(!hit)return;
     if(tool==='add'){addNodeAt(hit);}else scissors(hit);return;
   }
+  // In node mode a filled path is a marquee surface, not an object drag.
+  // Keep the edited objects fixed for the gesture; resolve single clicks later.
+  if(tool==='node'){
+    drag={type:'node-box',start:p,current:p,moved:false,clickId:id,
+      targets:new Set(selected().map(s=>s.id)),beforeNodes:new Set(nodeSelection),
+      previous:event.shiftKey?new Set(nodeSelection):new Set(),additive:event.shiftKey};
+    event.preventDefault();return;
+  }
   if(id){
     const ids=tool==='select'?[...Groups.expandSelection(doc,[id])]:[id];
     if(ids.some(sid=>byId(sid)?.locked||!byId(sid)?.visible)){toast('群组包含隐藏或锁定对象，请先显示并解锁。');return;}
@@ -134,7 +142,7 @@ canvas.addEventListener('pointerdown',event=>attempt(()=>{
     if(tool==='select')drag={type:'move',start:p,original:new Map(selected().map(s=>[s.id,G.clone(s)]))};
     render();return;
   }
-  drag={type:tool==='node'?'node-box':'box',start:p,current:p,previous:event.shiftKey?new Set(tool==='node'?nodeSelection:selection):new Set()};
+  drag={type:'box',start:p,current:p,previous:event.shiftKey?new Set(selection):new Set()};
   if(!event.shiftKey&&tool!=='node'){selection.clear();nodeSelection.clear();render();}
 }));
 canvas.addEventListener('pointermove',event=>attempt(()=>{
@@ -150,8 +158,24 @@ canvas.addEventListener('pointermove',event=>attempt(()=>{
     const n=byId(drag.sid).rings[drag.ri].nodes[drag.ni];let delta=G.sub(p,n);if(event.shiftKey){const a=Math.round(Math.atan2(delta.y,delta.x)/(Math.PI/4))*Math.PI/4,len=Math.hypot(delta.x,delta.y);delta=G.vec(Math.cos(a)*len,Math.sin(a)*len);}n[drag.side]=delta;
     if(!event.altKey){const len=Math.hypot(delta.x,delta.y);n[drag.side==='in'?'out':'in']=len?G.mul(delta,-(drag.otherLength||len)/len):G.vec();}render();return;
   }
+  if(drag.type==='node-box'){
+    drag.moved=drag.moved||G.dist(drag.start,p)*scale()>=3;
+    if(!drag.moved)return;
+    selectMarqueeNodes(drag,p);renderOverlay();
+  }
   drawGesture(event.shiftKey);
 }));
+function selectMarqueeNodes(d,p){
+  nodeSelection=new Set(d.previous);
+  const x1=Math.min(d.start.x,p.x),x2=Math.max(d.start.x,p.x);
+  const y1=Math.min(d.start.y,p.y),y2=Math.max(d.start.y,p.y);
+  for(const s of doc.shapes){
+    if(!d.targets.has(s.id)||!s.visible||s.locked)continue;
+    s.rings.forEach((r,ri)=>r.nodes.forEach((n,ni)=>{
+      if(n.x>=x1&&n.x<=x2&&n.y>=y1&&n.y<=y2)nodeSelection.add(keyFor(s.id,ri,ni));
+    }));
+  }
+}
 function drawGesture(square=false){const group=$('gesture');group.replaceChildren();if(!drag)return;let p=drag.current,a=drag.start;const z=scale();if(drag.type==='knife'){group.append(svg('line',{x1:a.x,y1:a.y,x2:p.x,y2:p.y,stroke:'#cb7563','stroke-width':1.7/z,'stroke-dasharray':`${6/z} ${3/z}`}));for(const endpoint of [a,p])group.append(svg('circle',{cx:endpoint.x,cy:endpoint.y,r:3/z,fill:'#cb7563',stroke:'white','stroke-width':1/z}));return;}
   let w=p.x-a.x,h=p.y-a.y;if(square&&['rect','ellipse'].includes(drag.type)){const m=Math.max(Math.abs(w),Math.abs(h));w=Math.sign(w||1)*m;h=Math.sign(h||1)*m;drag.current=G.add(a,G.vec(w,h));}const b={x:Math.min(a.x,a.x+w),y:Math.min(a.y,a.y+h),width:Math.abs(w),height:Math.abs(h)};
   group.append(svg(drag.type==='ellipse'?'ellipse':'rect',{...(drag.type==='ellipse'?{cx:b.x+b.width/2,cy:b.y+b.height/2,rx:b.width/2,ry:b.height/2}:b),fill:drag.type.includes('box')?'#2f927215':fillColor+'33',stroke:'#348e7c','stroke-width':1/z,'stroke-dasharray':`${4/z} ${3/z}`}));}
@@ -160,19 +184,31 @@ canvas.addEventListener('pointerup',event=>attempt(()=>{
   // Re-evaluate the final pointer position, even if no final pointermove arrived.
   if(drag.type==='nodes'&&G.dist(drag.start,point(event))>.01){const delta=precision.snapNode(drag,point(event),event);for(const[key,orig]of drag.original){const[id,ri,ni]=key.split('|'),n=byId(id).rings[+ri].nodes[+ni];n.x=orig.x+delta.x;n.y=orig.y+delta.y;}}
   const d=drag;drag=null;precision.clearSnap();$('gesture').replaceChildren();
-  if(d.type==='pan')return;const p=d.current||point(event);
+  if(d.type==='pan')return;const p=d.type==='node-box'?point(event):d.current||point(event);
+  if(d.type==='node-box'){
+    const moved=d.moved||G.dist(d.start,p)*scale()>=3;
+    if(moved){selectMarqueeNodes(d,p);render();return;}
+    // A click in a hole still selects its whole contour. A drag from that same
+    // point is a marquee, so it must not select/delete the entire hole.
+    const hole=!d.clickId?holeAt(doc.shapes,d.start):null;
+    if(hole){selectRingNodes(hole.id,hole.ringIndex);return;}
+    if(d.clickId&&!selection.has(d.clickId)){
+      const shape=byId(d.clickId);
+      if(shape?.visible&&!shape.locked){selectIds([d.clickId],d.additive);return;}
+    }
+    nodeSelection=new Set(d.previous);render();return;
+  }
   if(['move','nodes','handle'].includes(d.type)){if(G.dist(d.start,point(event))>.01)commit('已调整形状');else render();return;}
-  if(d.type==='box'||d.type==='node-box'){
+  if(d.type==='box'){
     const b={x:Math.min(d.start.x,p.x),y:Math.min(d.start.y,p.y),width:Math.abs(p.x-d.start.x),height:Math.abs(p.y-d.start.y)};
-    if(d.type==='box'){selection=d.previous;for(const s of doc.shapes){if(!s.visible||s.locked)continue;const a=G.bounds(s);if(a.x<=b.x+b.width&&a.x+a.width>=b.x&&a.y<=b.y+b.height&&a.y+a.height>=b.y){const group=Groups.expandSelection(doc,[s.id]);if([...group].every(id=>byId(id).visible&&!byId(id).locked))for(const id of group)selection.add(id);}}}
-    else{nodeSelection=d.previous;for(const s of selected())s.rings.forEach((r,ri)=>r.nodes.forEach((n,ni)=>{if(n.x>=b.x&&n.x<=b.x+b.width&&n.y>=b.y&&n.y<=b.y+b.height)nodeSelection.add(keyFor(s.id,ri,ni));}));}render();return;
+    selection=d.previous;for(const s of doc.shapes){if(!s.visible||s.locked)continue;const a=G.bounds(s);if(a.x<=b.x+b.width&&a.x+a.width>=b.x&&a.y<=b.y+b.height&&a.y+a.height>=b.y){const group=Groups.expandSelection(doc,[s.id]);if([...group].every(id=>byId(id).visible&&!byId(id).locked))for(const id of group)selection.add(id);}}render();return;
   }
   if(G.dist(d.start,p)<2/scale())return;
   if(d.type==='knife'){performCut(d.start,point(event));return;}
   const x=Math.min(d.start.x,p.x),y=Math.min(d.start.y,p.y),w=Math.abs(p.x-d.start.x),h=Math.abs(p.y-d.start.y);if(w<.1||h<.1)return;
   const s=d.type==='rect'?rectangle(x,y,w,h,{fill:fillColor,name:'矩形'}):ellipse(x+w/2,y+h/2,w/2,h/2,{fill:fillColor,name:'椭圆'});doc.shapes.push(s);selection=new Set([s.id]);commit('已创建图形');setTool('select');tab('properties');
 }));
-function cancelGesture(){if(drag&&['move','nodes','handle'].includes(drag.type)){doc=JSON.parse(history.states[history.index]);}drag=null;precision?.clearSnap();$('gesture').replaceChildren();render();}
+function cancelGesture(){if(drag&&['move','nodes','handle'].includes(drag.type)){doc=JSON.parse(history.states[history.index]);}if(drag?.type==='node-box')nodeSelection=new Set(drag.beforeNodes);drag=null;precision?.clearSnap();$('gesture').replaceChildren();render();}
 canvas.addEventListener('pointercancel',cancelGesture);
 canvas.addEventListener('lostpointercapture',()=>{if(drag)cancelGesture();});
 canvas.addEventListener('dblclick',e=>attempt(()=>{
