@@ -1,6 +1,6 @@
 {
   "name": "vector-studio",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "private": true,
   "description": "Local-first raster tracing and SVG path editor. No server-side processing.",
   "type": "module",

@@ -11,12 +11,13 @@ import {createTracePreview} from './trace-preview.js';
 import {createDocument,makeShape,rectangle,ellipse,exportSVG,validateDocument,History,uid,VERSION} from './document.js';
 const $=id=>document.getElementById(id),NS='http://www.w3.org/2000/svg';
 const canvas=$('editor'),workspace=$('workspace');
+const editNotice=document.createElement('div');editNotice.id='node-edit-notice';editNotice.hidden=true;editNotice.className='preview-controls';const editLabel=document.createElement('strong');const exitEditButton=document.createElement('button');exitEditButton.type='button';exitEditButton.textContent='退出节点编辑';exitEditButton.onclick=()=>exitNodeEdit();editNotice.append(editLabel,document.createTextNode(' · 双击空白退出 · 内外均可框选 '),exitEditButton);$('panel-properties').prepend(editNotice);
 let doc=createDocument(),history=new History(doc),selection=new Set(),nodeSelection=new Set();
-let tool='select',outline=false,showReference=true,fillColor='#247a70',dirty=false,drawingId=null;
+let tool='select',outline=false,showReference=true,fillColor='#e60012',dirty=false,drawingId=null;
 let view={x:-100,y:-100,width:1200,height:900},drag=null,space=false,worker=null,referenceRevision=0,saveTimer=null,toastTimer=null;
 let precision=null,contourPanel=null;
 let savedDraft=null,interacted=false,savedState=JSON.stringify(doc),exporting=false;
-const hints={select:'双击图形进入节点编辑；Shift 多选；群组整体移动；右键打开操作菜单。',node:'图形内外拖动均可框选节点；Shift 追加；Ctrl 点击曲线加点；Alt 点击节点减点；Esc 返回选择。',add:'点击曲线增加节点，保持曲线原有形状。',pen:'逐点点击绘制；点击起点闭合；Enter 结束开放路径。',knife:'只切割拖动起点到终点之间的线段；须贯穿区域，不向两端延伸。优先切割已选对象。',scissors:'点击曲线剪断单条路径；分割色块请用「切割」。',fill:'点击现有闭合对象，应用当前填充颜色。',rect:'拖动绘制矩形。Shift 限制为正方形。',ellipse:'拖动绘制椭圆。Shift 限制为圆。',pan:'拖动画布平移；滚轮以鼠标位置为中心缩放。'};
+const hints={select:'双击图形进入节点编辑；Shift 多选；群组整体移动；右键打开操作菜单。',node:'图形内外拖动均可框选节点；Shift 追加；Ctrl 点击曲线加点；Alt 点击节点减点；双击空白或 Esc 退出编辑。',add:'点击曲线增加节点，保持曲线原有形状。',pen:'逐点点击绘制；点击起点闭合；Enter 结束开放路径。',knife:'只切割拖动起点到终点之间的线段；须贯穿区域，不向两端延伸。优先切割已选对象。',scissors:'点击曲线剪断单条路径；分割色块请用「切割」。',fill:'点击现有闭合对象，应用当前填充颜色。',rect:'拖动绘制矩形。Shift 限制为正方形。',ellipse:'拖动绘制椭圆。Shift 限制为圆。',pan:'拖动画布平移；滚轮以鼠标位置为中心缩放。'};
 const selected=()=>doc.shapes.filter(s=>selection.has(s.id)&&s.visible&&!s.locked);
 const byId=id=>doc.shapes.find(s=>s.id===id);
 const scale=()=>canvas.getScreenCTM()?.a||1;
@@ -53,6 +54,7 @@ function render(){
   $('outline-btn').setAttribute('aria-pressed',outline);$('reference-btn').setAttribute('aria-pressed',showReference);
   $('reference').setAttribute('opacity',showReference?(doc.shapes.length?.28:1):0);
   $('rail-color').style.background=fillColor;
+  editNotice.hidden=tool!=='node';editLabel.textContent='正在编辑：'+(selected().map(s=>s.name).join('、')||'请选择图形');
   renderOverlay();renderLayers();renderProperties();tracePreview.render();renderCommandState();precision?.render();contourPanel?.render();
 }
 function renderOverlay(){
@@ -83,6 +85,10 @@ function selectIds(ids,shift=false){
   for(const id of ids){if(shift&&all)selection.delete(id);else selection.add(id);}nodeSelection.clear();render();
 }
 function enterNodes(id){const shape=byId(id);if(!shape||shape.locked||!shape.visible)return;tracePreview.hide();selection=new Set([id]);nodeSelection.clear();setTool('node');tab('properties');}
+function exitNodeEdit(){
+  if(worker||exporting)return;if(drag)cancelGesture();nodeSelection.clear();selection.clear();setTool('select');
+  status('已退出节点编辑；修改保留，双击图形可再次编辑。');
+}
 function renderLayers(){renderLayerTree(doc,selection,{onSelect:selectIds,onEdit:enterNodes,onChange:commit,onContext:showContext,onNotice:toast});}
 function renderCommandState(){
   const c=capabilities(doc,selection,nodeSelection.size,!!worker||exporting);
@@ -192,7 +198,7 @@ canvas.addEventListener('pointerup',event=>attempt(()=>{
     // point is a marquee, so it must not select/delete the entire hole.
     const hole=!d.clickId?holeAt(doc.shapes,d.start):null;
     if(hole){selectRingNodes(hole.id,hole.ringIndex);return;}
-    if(d.clickId&&!selection.has(d.clickId)){
+    if(d.clickId&&!selection.has(d.clickId)&&!selected().length){
       const shape=byId(d.clickId);
       if(shape?.visible&&!shape.locked){selectIds([d.clickId],d.additive);return;}
     }
@@ -213,8 +219,11 @@ canvas.addEventListener('pointercancel',cancelGesture);
 canvas.addEventListener('lostpointercapture',()=>{if(drag)cancelGesture();});
 canvas.addEventListener('dblclick',e=>attempt(()=>{
   if(worker||!['node','select'].includes(tool)||e.ctrlKey||e.metaKey||e.altKey)return;
-  const id=e.target.closest('[data-id]')?.getAttribute('data-id')||e.target.getAttribute('data-node')?.split('|')[0]||shapeAt(point(e))?.id||findCurve(point(e))?.shape.id;
-  if(id)enterNodes(id);
+  const p=point(e),editorHit=tool==='node'?pickEditorPoint(doc.shapes,selection,nodeSelection,p,scale()):{};
+  const hole=holeAt(doc.shapes,p);
+  const id=e.target.closest('[data-id]')?.getAttribute('data-id')||e.target.getAttribute('data-node')?.split('|')[0]||editorHit.node?.split('|')[0]||editorHit.handle?.split('|')[0]||shapeAt(p)?.id||hole?.id||findCurve(p)?.shape.id;
+  if(id){if(hole)selectRingNodes(hole.id,hole.ringIndex);else enterNodes(id);}
+  else if(tool==='node'){exitNodeEdit();}
 }));
 function shapeAt(p){
   const paths=[...$('objects').querySelectorAll('path[data-id]')].reverse();
@@ -341,9 +350,9 @@ async function savePSD(){if(!$('psd-accept').checked)return;const snapshot=valid
 function saveSVG(){finishPen();if(!doc.shapes.some(s=>s.visible))throw new Error('还没有可以导出的矢量对象。');validateDocument(doc);download(exportSVG(doc),'image/svg+xml',filename('.svg'));toast('已导出真实 SVG 路径，不含参考图片');}
 async function newProject(){if(!await checkDiscard())return;cancelTrace(false);library.reset();doc=createDocument();savedState=JSON.stringify(doc);referenceRevision++;history.reset(doc);dirty=false;selection.clear();nodeSelection.clear();drawingId=null;syncReference();render();fit();scheduleDraft();}
 async function vectorDemo(){if(!await checkDiscard())return;cancelTrace(false);library.reset();doc=createDocument();savedState=null;doc.name='镂空与曲线 · 编辑示例';
-  const outer=ellipse(290,340,155,155,{fill:'#266e63',name:'圆环 · 内部透明'}),inner=ellipse(290,340,84,84);outer.rings.push(inner.rings[0]);
+  const outer=ellipse(290,340,155,155,{fill:'#e60012',name:'圆环 · 内部透明'}),inner=ellipse(290,340,84,84);outer.rings.push(inner.rings[0]);
   const leaf=makeShape([{closed:true,nodes:[{...G.node(525,492),in:G.vec(180,8),out:G.vec(-30,-225)},{...G.node(730,155),in:G.vec(-158,40),out:G.vec(65,206)}]}],{name:'叶形 · 拖动手柄',fill:'#cdb88f'});
-  const disk=ellipse(760,455,89,89,{name:'圆形 · 可移动',fill:'#547f82'});
+  const disk=ellipse(760,455,89,89,{name:'圆形 · 可移动',fill:'#e60012'});
   doc.shapes=[outer,leaf,disk];history.reset(doc);dirty=true;selection=new Set([leaf.id]);nodeSelection.clear();drawingId=null;referenceRevision++;syncReference();tool='node';setTool('node');render();fit();tab('properties');scheduleDraft();toast('示例中圆环的孔洞是真正透明的；拖动节点试试看');}
 async function rasterDemo(){
   const c=document.createElement('canvas');c.width=760;c.height=520;const ctx=c.getContext('2d');ctx.fillStyle='#ffffff';ctx.fillRect(0,0,760,520);
@@ -412,7 +421,7 @@ for(const [id,dim]of [['prop-x','x'],['prop-y','y'],['prop-w','width'],['prop-h'
 for(const [id,output,suffix]of [['threshold','threshold-value',''],['tolerance','tolerance-value',' px'],['speckle','speckle-value',' px²']])$(id).oninput=()=>$(output).textContent=$(id).value+suffix;
 function modeFields(){const binary=$('trace-mode').value==='binary',blocked=!doc.image||!!worker;for(const id of ['trace-mode','trace-size','tolerance','speckle','live-preview','preview-display','replace-trace'])$(id).disabled=blocked;$('threshold').disabled=blocked||!binary;$('color-count').disabled=blocked||binary;$('remove-background').disabled=blocked||binary;}
 $('trace-mode').onchange=modeFields;
-for(const color of ['#1c222e','#247a70','#548b8e','#cdb88f','#c76659','#867196','#ffffff']){const b=document.createElement('button');b.style.background=color;b.title=`填充 ${color}`;b.setAttribute('aria-label',`填充 ${color}`);b.onclick=()=>{if(!worker)applyFill(color);};$('swatches').append(b);}
+for(const color of ['#e60012','#1c222e','#247a70','#548b8e','#cdb88f','#c76659','#867196','#ffffff']){const b=document.createElement('button');b.style.background=color;b.title=`填充 ${color}`;b.setAttribute('aria-label',`填充 ${color}`);b.onclick=()=>{if(!worker)applyFill(color);};$('swatches').append(b);}
 window.addEventListener('paste',e=>{if(/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName))return;const items=[...(e.clipboardData?.items||[])];const img=items.find(i=>i.kind==='file'&&i.type.startsWith('image/'));if(img){e.preventDefault();const file=img.getAsFile();attemptAsync(()=>openFile(file));}});
 on('paste-btn',()=>attemptAsync(async()=>{if(!navigator.clipboard?.read){toast('请直接按 Ctrl + V 粘贴图片。');return;}try{const items=await navigator.clipboard.read();for(const item of items){const type=item.types.find(t=>/^image\/(png|jpeg|webp|bmp)$/.test(t));if(type){const blob=await item.getType(type);await openFile(new File([blob],'粘贴图片.'+(type.split('/')[1]),{type}));return;}}toast('剪贴板中没有支持的图片。');}catch{toast('浏览器未允许读取剪贴板，请直接按 Ctrl + V。');}}));
 workspace.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='copy';});workspace.addEventListener('drop',e=>{e.preventDefault();attemptAsync(()=>openFile(e.dataTransfer.files[0]));});

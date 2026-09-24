@@ -3,7 +3,7 @@
  * Binary mode traces foreground outlines, NOT stroke centerlines.
  */
 import {stitchEdges, signedArea, simplifyRing, groupRings, ring} from './geometry.js';
-import {roundTraceRing} from './trace-curves.js';
+import {fitTraceGroup} from './trace-curves.js';
 
 export function traceImage({width,height,data}, options={}) {
   if(!Number.isInteger(width)||!Number.isInteger(height)||width<1||height<1||width*height>1048576||data.length!==width*height*4)throw new Error('描摹输入无效或超过 1024 × 1024 像素预算。');
@@ -36,14 +36,14 @@ export function traceImage({width,height,data}, options={}) {
       for(let i=0;i<n;i+=stride)if(!transparent[i]){const k=i*4,j=nearest(data[k],data[k+1],data[k+2],palette);sums[j][0]++;sums[j][1]+=data[k];sums[j][2]+=data[k+1];sums[j][3]+=data[k+2];}
       palette=palette.map((p,j)=>sums[j][0]?sums[j].slice(1).map(x=>Math.round(x/sums[j][0])):p);
     }
-  } else palette=[[28,34,46]];
+  } else palette=[[230,0,18]];
   const labels=new Int16Array(n);labels.fill(-1);
   for(let i=0;i<n;i++)if(!transparent[i]){
     const k=i*4;
     if(colorMode)labels[i]=nearest(data[k],data[k+1],data[k+2],palette);
     else if(.2126*data[k]+.7152*data[k+1]+.0722*data[k+2]<threshold)labels[i]=0;
   }
-  const shapes=[];let totalEdges=0;
+  const shapes=[];let totalEdges=0,sourceNodes=0,fallbacks=0;
   for(let color=0;color<palette.length;color++){
     const edges=[];
     for(let y=0;y<height;y++)for(let x=0;x<width;x++){
@@ -57,9 +57,9 @@ export function traceImage({width,height,data}, options={}) {
     if(totalEdges>150000)throw new Error('图片细节过多，请降低描摹尺寸或先减少噪点。');
     const rings=stitchEdges(edges).filter(p=>Math.abs(signedArea(p))>=minArea).map(p=>simplifyRing(p,tolerance));
     const fill='#'+palette[color].map(v=>v.toString(16).padStart(2,'0')).join('');
-    for(const group of groupRings(rings))shapes.push({rings:group.map(p=>roundTraceRing(p,options)),fill,stroke:'none',strokeWidth:0});
+    for(const group of groupRings(rings)){sourceNodes+=group.reduce((n,r)=>n+r.length,0);const fit=fitTraceGroup(group,options);fallbacks+=Number(fit.fallback);shapes.push({rings:fit.rings,fill,stroke:'none',strokeWidth:0});}
   }
   if(shapes.length>1500)throw new Error('生成对象超过 1500 个，请提高去杂点参数或减少颜色。');
-  return {shapes,engine:'native-preview',width,height};
+  return {shapes,engine:'adaptive-bezier-preview',width,height,sourceNodes,fallbacks};
 }
 function nearest(r,g,b,palette){let index=0,min=Infinity;for(let j=0;j<palette.length;j++){const p=palette[j],d=(r-p[0])**2+(g-p[1])**2+(b-p[2])**2;if(d<min){min=d;index=j;}}return index;}
