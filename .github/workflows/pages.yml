@@ -16,6 +16,23 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
+      - name: Archive source under test
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-under-test
+          path: |
+            src
+            scripts
+            tests
+            docs
+            public-projects
+            index.html
+            package.json
+            AGENTS.md
+            LICENSE
+            README.md
+            CHANGELOG.md
+          retention-days: 7
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
