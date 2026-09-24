@@ -8,6 +8,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 ROOT=Path(__file__).resolve().parents[1]
 OUT=ROOT/'artifacts';OUT.mkdir(exist_ok=True)
+EXPECTED_VERSION=json.loads((ROOT/'package.json').read_text())['version']
 class Quiet(http.server.SimpleHTTPRequestHandler):
     def log_message(self,*args):pass
 server=http.server.ThreadingHTTPServer(('127.0.0.1',0),functools.partial(Quiet,directory=str(ROOT/'dist')))
@@ -22,7 +23,7 @@ try:
     page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
     if inject:page.set_content((ROOT/'dist/index.html').read_text())
     else:page.goto(url)
-    page.wait_for_function('() => window.vectorStudio?.version === "0.4.0"')
+    page.wait_for_function('(version) => window.vectorStudio?.version === version',arg=EXPECTED_VERSION)
     page.click('#bezier-shortcut');assert page.locator('#trace-curve-type').is_visible();assert page.locator('#trace-curve-type').is_disabled()
     assert page.locator('[data-curve-choice]').count()==3
     page.click('#raster-demo-btn');page.wait_for_function('() => vectorStudio.preview().ready && !vectorStudio.preview().pending')
