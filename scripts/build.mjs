@@ -14,9 +14,10 @@ function bundleModule(source,name,bindings=''){
 const geometry=bundleModule(await read('src/geometry.js'),'VSGeometry');
 const groups=bundleModule(await read('src/groups.js'),'VSGroups');
 const documentModule=bundleModule(await read('src/document.js'),'VSDocument','const {node,ring,pathData}=VSGeometry;const {validateGroups,ancestors,groupMap}=VSGroups;');
-const trace=bundleModule(await read('src/trace.js'),'VSTrace','const {stitchEdges,signedArea,simplifyRing,groupRings,ring}=VSGeometry;');
-const worker=`${geometry}\n${trace}\nself.onmessage=({data})=>{try{self.postMessage({ok:true,result:VSTrace.traceImage(data.image,data.options)});}catch(e){self.postMessage({ok:false,error:e.message||'描摹失败'});}};`;
-const preview=bundleModule(await read('src/trace-preview.js'),'VSPreview','const {pathData}=VSGeometry;');
+const curves=bundleModule(await read('src/trace-curves.js'),'VSCurves','const {node,ring,dist,sub,mul,lerp,signedArea}=VSGeometry;');
+const trace=bundleModule(await read('src/trace.js'),'VSTrace','const {stitchEdges,signedArea,simplifyRing,groupRings,ring}=VSGeometry;const {roundTraceRing}=VSCurves;');
+const worker=`${geometry}\n${curves}\n${trace}\nself.onmessage=({data})=>{try{self.postMessage({ok:true,result:VSTrace.traceImage(data.image,data.options)});}catch(e){self.postMessage({ok:false,error:e.message||'描摹失败'});}};`;
+const preview=bundleModule(await read('src/trace-preview.js'),'VSPreview','const {pathData}=VSGeometry;const {VERSION}=VSDocument;');
 const store=bundleModule(await read('src/project-store.js'),'VSStore');
 const library=bundleModule(await read('src/project-library.js'),'VSLibrary','const {openProjectDB,projectRecords,putProject,removeProject}=VSStore;const {validateDocument,uid,exportSVG}=VSDocument;');
 const ui=bundleModule(await read('src/editor-ui.js'),'VSUI','const {bounds,pathData}=VSGeometry;const {entries,members,expandSelection,rootId,selectedGroups}=VSGroups;');
@@ -33,9 +34,11 @@ const bootstrap=`const workerSource=${JSON.stringify(worker)};\nfunction createL
 const js=`(()=>{'use strict';\n${geometry}\n${groups}\n${documentModule}\n${preview}\n${store}\n${library}\n${ui}\n${psd}\n${precision}\n${precisionUI}\n${bootstrap}\n${app}\n})();`;
 const hash=createHash('sha256').update(js).digest('base64');
 const css=await read('src/style.css')+'\n'+await read('src/workspace.css');
+const version=JSON.parse(await read('package.json')).version;
 let html=await read('index.html');
 html=html.replace('<link rel="stylesheet" href="./src/style.css">',()=>`<style>${css}</style>`)
  .replace('<link rel="stylesheet" href="./src/workspace.css">','')
+ .replace(/(<small class="version">)[^<]+/,`$1${version} 预览版`)
  .replace('<script type="module" src="./src/app.js"></script>',()=>`<script>${js}</script>`)
  .replace("script-src 'self'",`script-src 'sha256-${hash}'`).replace("worker-src 'self'",'worker-src blob:');
 await mkdir(resolve(root,'dist'),{recursive:true});await writeFile(resolve(root,'dist/index.html'),html);await writeFile(resolve(root,'dist/.nojekyll'),'');

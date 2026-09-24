@@ -3,6 +3,7 @@
  * Binary mode traces foreground outlines, NOT stroke centerlines.
  */
 import {stitchEdges, signedArea, simplifyRing, groupRings, ring} from './geometry.js';
+import {roundTraceRing} from './trace-curves.js';
 
 export function traceImage({width,height,data}, options={}) {
   if(!Number.isInteger(width)||!Number.isInteger(height)||width<1||height<1||width*height>1048576||data.length!==width*height*4)throw new Error('描摹输入无效或超过 1024 × 1024 像素预算。');
@@ -56,7 +57,7 @@ export function traceImage({width,height,data}, options={}) {
     if(totalEdges>150000)throw new Error('图片细节过多，请降低描摹尺寸或先减少噪点。');
     const rings=stitchEdges(edges).filter(p=>Math.abs(signedArea(p))>=minArea).map(p=>simplifyRing(p,tolerance));
     const fill='#'+palette[color].map(v=>v.toString(16).padStart(2,'0')).join('');
-    for(const group of groupRings(rings))shapes.push({rings:group.map(p=>ring(p)),fill,stroke:'none',strokeWidth:0});
+    for(const group of groupRings(rings))shapes.push({rings:group.map(p=>roundTraceRing(p,options)),fill,stroke:'none',strokeWidth:0});
   }
   if(shapes.length>1500)throw new Error('生成对象超过 1500 个，请提高去杂点参数或减少颜色。');
   return {shapes,engine:'native-preview',width,height};
